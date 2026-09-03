@@ -26,23 +26,33 @@
  *    three ratios silently halves anything whose proportions differ from what
  *    the caller assumed.
  */
-import * as THREE from 'three';
-import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
-import { applySurfaces } from './surfaces.js';
+import * as THREE from "three";
+import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
+import { applySurfaces, surfaceDefaultsEnabled } from "./surfaces.js";
 
-const cache = new Map();   // url -> Promise<prototype>
+const cache = new Map(); // url -> Promise<prototype>
 
 function materialKey(m) {
-  if (!m) return 'none';
+  if (!m) return "none";
   // Maps have to be part of the key. Two materials can agree on every scalar and
   // still carry different surfaces, and merging those produces an asset wearing
   // one part's texture on another part's geometry.
-  const tex = (t) => (t ? `${t.uuid}:${t.repeat.x},${t.repeat.y}` : '-');
+  const tex = (t) => (t ? `${t.uuid}:${t.repeat.x},${t.repeat.y}` : "-");
   return [
-    m.type, m.color?.getHexString?.(), m.roughness, m.metalness, m.flatShading,
-    m.transparent, m.opacity, m.side, m.emissive?.getHexString?.(), m.vertexColors,
-    tex(m.map), tex(m.roughnessMap), tex(m.normalMap),
-  ].join('|');
+    m.type,
+    m.color?.getHexString?.(),
+    m.roughness,
+    m.metalness,
+    m.flatShading,
+    m.transparent,
+    m.opacity,
+    m.side,
+    m.emissive?.getHexString?.(),
+    m.vertexColors,
+    tex(m.map),
+    tex(m.roughnessMap),
+    tex(m.normalMap),
+  ].join("|");
 }
 
 /**
@@ -58,7 +68,7 @@ function normaliseForMerge(geos) {
     const names = new Set(Object.keys(g.attributes));
     common = common ? new Set([...common].filter((n) => names.has(n))) : names;
   }
-  if (!common || !common.has('position')) return null;
+  if (!common || !common.has("position")) return null;
   for (const g of plain) {
     for (const name of Object.keys(g.attributes)) {
       if (!common.has(name)) g.deleteAttribute(name);
@@ -84,8 +94,8 @@ function expandInstances(o, bucket) {
   for (let i = 0; i < o.count; i++) {
     o.getMatrixAt(i, _m);
     const g = o.geometry.clone();
-    g.applyMatrix4(_m);              // instance-local placement
-    g.applyMatrix4(o.matrixWorld);   // then the mesh's own world transform
+    g.applyMatrix4(_m); // instance-local placement
+    g.applyMatrix4(o.matrixWorld); // then the mesh's own world transform
     // Instances can carry a per-instance colour via setColorAt. Merge without
     // baking it and every copy comes out the material's base colour.
     if (ic) {
@@ -93,15 +103,17 @@ function expandInstances(o, bucket) {
       const n = g.attributes.position.count;
       const arr = new Float32Array(n * 3);
       for (let v = 0; v < n; v++) {
-        arr[v * 3] = _col.r; arr[v * 3 + 1] = _col.g; arr[v * 3 + 2] = _col.b;
+        arr[v * 3] = _col.r;
+        arr[v * 3 + 1] = _col.g;
+        arr[v * 3 + 2] = _col.b;
       }
-      g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+      g.setAttribute("color", new THREE.BufferAttribute(arr, 3));
     }
     bucket.geos.push(g);
   }
   if (ic && !bucket.mat.vertexColors) {
     bucket.mat = bucket.mat.clone();
-    bucket.mat.vertexColors = true;   // or the bake above is wasted
+    bucket.mat.vertexColors = true; // or the bake above is wasted
   }
 }
 
@@ -120,11 +132,16 @@ function mergeByMaterialValues(root) {
   root.traverse((o) => {
     if (o.isMesh && o.geometry) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      if (mats.length > 1) { skip.push(o); return; }   // multi-material: leave alone
-      const sig = Object.keys(o.geometry.attributes).sort().join(',') +
-        (o.isInstancedMesh && o.instanceColor ? ',color' : '');
-      const k = materialKey(mats[0]) + '#' + sig;
-      if (!buckets.has(k)) buckets.set(k, { mat: mats[0], geos: [], cast: false, receive: false });
+      if (mats.length > 1) {
+        skip.push(o);
+        return;
+      } // multi-material: leave alone
+      const sig =
+        Object.keys(o.geometry.attributes).sort().join(",") +
+        (o.isInstancedMesh && o.instanceColor ? ",color" : "");
+      const k = materialKey(mats[0]) + "#" + sig;
+      if (!buckets.has(k))
+        buckets.set(k, { mat: mats[0], geos: [], cast: false, receive: false });
       const bucket = buckets.get(k);
       // Carry the shadow flags across the merge. A merged mesh is a NEW mesh and
       // castShadow defaults to false, so without this the merge silently switches
@@ -135,7 +152,10 @@ function mergeByMaterialValues(root) {
       bucket.cast = bucket.cast || o.castShadow;
       bucket.receive = bucket.receive || o.receiveShadow;
 
-      if (o.isInstancedMesh) { expandInstances(o, bucket); return; }
+      if (o.isInstancedMesh) {
+        expandInstances(o, bucket);
+        return;
+      }
 
       const g = o.geometry.clone();
       g.applyMatrix4(o.matrixWorld);
@@ -146,19 +166,28 @@ function mergeByMaterialValues(root) {
   });
 
   const out = new THREE.Group();
-  const shadowed = (m, cast, receive) => { m.castShadow = cast; m.receiveShadow = receive; return m; };
+  const shadowed = (m, cast, receive) => {
+    m.castShadow = cast;
+    m.receiveShadow = receive;
+    return m;
+  };
   for (const { mat, geos, cast, receive } of buckets.values()) {
     if (!geos.length) continue;
     let geo = geos.length === 1 ? geos[0] : null;
     if (!geo) {
       const ready = normaliseForMerge(geos);
       if (ready) {
-        try { geo = BufferGeometryUtils.mergeGeometries(ready, false); } catch { geo = null; }
+        try {
+          geo = BufferGeometryUtils.mergeGeometries(ready, false);
+        } catch {
+          geo = null;
+        }
       }
       if (!geo) {
         // Merging is an optimisation, never a correctness requirement. If these
         // still will not combine, draw them separately rather than lose them.
-        for (const g of geos) out.add(shadowed(new THREE.Mesh(g, mat), cast, receive));
+        for (const g of geos)
+          out.add(shadowed(new THREE.Mesh(g, mat), cast, receive));
         continue;
       }
     }
@@ -174,12 +203,15 @@ function mergeByMaterialValues(root) {
 }
 
 async function loadPrototype(url, keepHierarchy = false) {
-  const key = keepHierarchy ? url + '#tree' : url;
+  const key = keepHierarchy ? url + "#tree" : url;
   if (cache.has(key)) return cache.get(key);
   const p = (async () => {
-    const mod = await import(/* @vite-ignore */ new URL(url, location.href).href);
+    const mod = await import(
+      /* @vite-ignore */ new URL(url, location.href).href
+    );
     const fn = mod.default || mod.build || mod.create;
-    if (typeof fn !== 'function') throw new Error(`asset has no default export function: ${url}`);
+    if (typeof fn !== "function")
+      throw new Error(`asset has no default export function: ${url}`);
     const built = fn(THREE);
     // Merging is what keeps the draw calls down and it is right for scenery. It
     // is also destructive: it collapses the hierarchy and drops everything the
@@ -215,17 +247,21 @@ async function loadPrototype(url, keepHierarchy = false) {
  * So the prototype records NAMES, and every instance resolves them against its
  * own tree. Parts without a name are given one, since most authors do not set it.
  */
-const REF_PREFIX = '__part__';
+const REF_PREFIX = "__part__";
 
 function carryDeclarations(src, wrapper) {
   const refs = {};
   for (const [key, val] of Object.entries(src.userData || {})) {
-    if (key === 'nativeSize') continue;
+    if (key === "nativeSize") continue;
     if (val && val.isObject3D) {
       if (!val.name) val.name = `${REF_PREFIX}${key}`;
       refs[key] = val.name;
-    } else if (val && typeof val === 'object' && !Array.isArray(val) &&
-               Object.values(val).some((v) => v && v.isObject3D)) {
+    } else if (
+      val &&
+      typeof val === "object" &&
+      !Array.isArray(val) &&
+      Object.values(val).some((v) => v && v.isObject3D)
+    ) {
       const map = {};
       for (const [sub, node] of Object.entries(val)) {
         if (!node || !node.isObject3D) continue;
@@ -234,7 +270,7 @@ function carryDeclarations(src, wrapper) {
       }
       refs[key] = map;
     } else {
-      wrapper.userData[key] = val;      // plain data survives a clone unharmed
+      wrapper.userData[key] = val; // plain data survives a clone unharmed
     }
   }
   if (Object.keys(refs).length) wrapper.userData[REF_PREFIX] = refs;
@@ -245,9 +281,11 @@ function resolveDeclarations(inst) {
   const refs = inst.userData && inst.userData[REF_PREFIX];
   if (!refs) return;
   const byName = new Map();
-  inst.traverse((o) => { if (o.name) byName.set(o.name, o); });
+  inst.traverse((o) => {
+    if (o.name) byName.set(o.name, o);
+  });
   for (const [key, val] of Object.entries(refs)) {
-    if (typeof val === 'string') {
+    if (typeof val === "string") {
       const node = byName.get(val);
       if (node) inst.userData[key] = node;
     } else {
@@ -292,7 +330,7 @@ export async function ASSET(url, opts = {}) {
   try {
     proto = await loadPrototype(url, !!opts.keepHierarchy);
   } catch (e) {
-    console.warn('[assets]', url, e.message);
+    console.warn("[assets]", url, e.message);
     return new THREE.Group();
   }
   const inst = proto.clone(true);
@@ -301,16 +339,27 @@ export async function ASSET(url, opts = {}) {
   if (opts.height && native && native.y > 1e-6) {
     inst.scale.setScalar(opts.height / native.y);
   }
-  inst.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  inst.traverse((o) => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
   // Surfaces are applied per instance rather than on the cached prototype, so a
   // game can have a textured and an untextured copy of the same asset.
-  if (opts.surfaces) applySurfaces(THREE, inst, opts.surfaces === true ? {} : opts.surfaces);
+  if (opts.surfaces || surfaceDefaultsEnabled()) {
+    applySurfaces(THREE, inst, opts.surfaces === true ? {} : opts.surfaces);
+  }
   return inst;
 }
 
 /** Preload in parallel so the first frame is not a slideshow. */
 export async function preloadAssets(urls) {
-  await Promise.all(urls.map((u) => loadPrototype(u).catch((e) => console.warn('[assets]', u, e.message))));
+  await Promise.all(
+    urls.map((u) =>
+      loadPrototype(u).catch((e) => console.warn("[assets]", u, e.message)),
+    ),
+  );
 }
 
 /**
