@@ -326,7 +326,6 @@ export const DRESSING = Object.freeze([
     scale: [0.91, 0.91, 0.91],
     rotation: [0, 2.06, 0],
   },
-
   // Green tunnel: alternating banks occlude the gate completely until p2_left.
   {
     id: "tun_bank_r",

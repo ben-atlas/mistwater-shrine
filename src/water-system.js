@@ -1,6 +1,10 @@
 import * as THREE from "three";
 
 const MAX_IMPULSES = 24;
+// Keep locomotion wakes from erasing the landing history. The shader/uniform
+// budget stays fixed; these are simply two independently recycled lanes.
+const IMPACT_IMPULSES = 16;
+const WAKE_IMPULSES = MAX_IMPULSES - IMPACT_IMPULSES;
 const MAX_REFLECTED_PADS = 16;
 const DEFAULT_DROPLETS = 160;
 const DEFAULT_CROWNS = 16;
@@ -103,6 +107,7 @@ uniform vec3 uSunDirection;
 uniform vec3 uSunColor;
 uniform float uOpacity;
 uniform vec4 uReflectedPad[16]; // x, z, radius, enabled
+uniform vec4 uHeroReflection; // x, z, yaw, enabled
 uniform vec4 uImpulse[MAX_IMPULSES];
 uniform vec4 uImpulseShape[MAX_IMPULSES];
 uniform vec4 uImpulseDirection[MAX_IMPULSES];
@@ -110,6 +115,7 @@ varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying float vInteraction;
 varying float vWaterHeight;
+
 
 // Signed distance helpers for the reflected-scene proxy.  This is deliberately
 // tiny compared with a planar reflection: the lake analytically reflects the
@@ -177,44 +183,56 @@ vec3 sceneCoupledReflection(vec2 surfacePoint, vec3 normal, out float coverage) 
   vec3 reflected = vec3(0.0);
   coverage = 0.0;
 
-  // Lotus pads: broad green elliptical reflections extended toward the viewer.
-  // The active/nearest pad also carries the guardian's russet segmented streak.
-  vec2 expectedHero = cameraPosition.xz + vec2(0.0, -5.6);
-  float nearestDistance = 999.0;
-  int nearestPad = 0;
+  // Lotus mirrors are ray-stretched notched leaves, not painted ovals. The
+  // shared normal field breaks their rims into coherent moving fragments.
   for (int i = 0; i < 16; i++) {
     vec4 pad = uReflectedPad[i];
-    float distanceToExpected = length(pad.xy - expectedHero) + (1.0 - pad.w) * 999.0;
-    if (distanceToExpected < nearestDistance) {
-      nearestDistance = distanceToExpected;
-      nearestPad = i;
-    }
-  }
-  for (int i = 0; i < 16; i++) {
-    vec4 pad = uReflectedPad[i];
-    vec2 d = p - (pad.xy + vec2(0.0, pad.z * .68));
-    // Reflected footprint extends +z (towards chase camera), with a split edge.
-    float ellipse = length(vec2(d.x / max(.1, pad.z), d.y / max(.1, pad.z * 1.85)));
-    float mask = pad.w * (1.0 - smoothstep(.78, 1.13, ellipse));
-    float normalBreak = smoothstep(.12, .82,
-      .5 + .5 * sin(d.y * 4.7 + normal.x * 13.0 + normal.z * 7.0));
-    mask *= mix(.52, 1.0, normalBreak);
-    float alpha = mask * .34;
+    vec2 viewAxis = normalize(cameraPosition.xz - pad.xy + vec2(.001));
+    vec2 sideAxis = vec2(-viewAxis.y, viewAxis.x);
+    vec2 d = p - (pad.xy + viewAxis * pad.z * .72);
+    vec2 leaf = vec2(dot(d, sideAxis), dot(d, viewAxis));
+    float ellipse = length(vec2(leaf.x / max(.1, pad.z * 1.02),
+                                leaf.y / max(.1, pad.z * 1.92)));
+    float notch = smoothstep(.08, .34, abs(leaf.x) / max(.1, pad.z))
+      + smoothstep(.04, .42, -leaf.y / max(.1, pad.z));
+    float mask = pad.w * (1.0 - smoothstep(.76, 1.08, ellipse))
+      * clamp(notch, 0.0, 1.0);
+    float normalBreak = smoothstep(.18, .76, .5 + .5 * sin(
+      leaf.y * 5.1 + leaf.x * 2.2 + normal.x * 17.0 + normal.z * 11.0));
+    mask *= mix(.38, 1.0, normalBreak);
+    float rim = 1.0 - smoothstep(.035, .20, abs(ellipse - .86));
+    float alpha = mask * (.27 + rim * .13);
     reflected = mix(reflected, vec3(.075, .20, .105), alpha);
     coverage = max(coverage, alpha);
-
-    if (i == nearestPad) {
-      vec2 heroDelta = p - (pad.xy + vec2(.0, pad.z * 1.55));
-      float torso = 1.0 - smoothstep(.42, .74,
-        length(vec2(heroDelta.x / .5, heroDelta.y / 1.65)));
-      float segments = smoothstep(.08, .7,
-        .5 + .5 * sin(heroDelta.y * 8.2 + normal.x * 5.0));
-      float heroMask = pad.w * torso * segments
-        * (1.0 - smoothstep(5.5, 8.5, nearestDistance));
-      reflected = mix(reflected, vec3(.48, .095, .038), heroMask * .57);
-      coverage = max(coverage, heroMask * .57);
-    }
   }
+
+  // Live guardian reflection. Heading controls the shoulder/tail silhouette;
+  // camera alignment controls its reflected reach, while water normals break
+  // the body into bands. This follows the actor instead of guessing a pad.
+  vec2 heroForward = vec2(sin(uHeroReflection.z), cos(uHeroReflection.z));
+  vec2 heroSide = vec2(heroForward.y, -heroForward.x);
+  vec2 heroView = normalize(cameraPosition.xz - uHeroReflection.xy + vec2(.001));
+  // The hero uses restrained distortion: the larger pad parallax made its
+  // compact body occasionally jump into a foreground-sized red band.
+  vec2 heroPoint = surfacePoint + normal.xz * vec2(1.35, 2.15);
+  vec2 hd = heroPoint - (uHeroReflection.xy + heroView * .88);
+  vec2 h = vec2(dot(hd, heroSide), dot(hd, heroView));
+  float torso = 1.0 - smoothstep(.72, 1.04,
+    length(vec2(h.x / .58, (h.y - .55) / 1.72)));
+  vec2 tailCentre = vec2(dot(heroForward * -.62, heroSide),
+                         dot(heroForward * -.62, heroView) + .42);
+  float tail = 1.0 - smoothstep(.17, .34,
+    abs(length(h - tailCentre) - .48));
+  float legs = (1.0 - smoothstep(.13, .27, abs(h.x - .27)))
+    * smoothstep(-.12, .18, h.y) * (1.0 - smoothstep(.58, .96, h.y));
+  legs = max(legs, (1.0 - smoothstep(.13, .27, abs(h.x + .27)))
+    * smoothstep(-.12, .18, h.y) * (1.0 - smoothstep(.58, .96, h.y)));
+  float waterBreak = smoothstep(.20, .78, .5 + .5 * sin(
+    h.y * 8.7 + h.x * 3.2 + normal.x * 21.0 + normal.z * 13.0));
+  float heroMask = uHeroReflection.w * max(max(torso, tail * .72), legs * .8)
+    * mix(.28, 1.0, waterBreak);
+  reflected = mix(reflected, vec3(.42, .060, .024), heroMask * .48);
+  coverage = max(coverage, heroMask * .48);
 
   // Three warm practicals: the tunnel lantern and shrine pair. Their tapered,
   // broken vertical strokes are immediately distinguishable from moonlight.
@@ -234,6 +252,28 @@ vec3 sceneCoupledReflection(vec2 surfacePoint, vec3 normal, out float coverage) 
   return reflected;
 }
 
+vec2 padWaterlineCoupling(vec2 surfacePoint) {
+  float wetSkirt = 0.0;
+  float stirredSilt = 0.0;
+  for (int i = 0; i < 16; i++) {
+    vec4 pad = uReflectedPad[i];
+    vec2 d = surfacePoint - pad.xy;
+    // Match the traversal leaf's broad x / shallow z footprint. The dark inner
+    // skirt grounds the leaf; the wider asymmetric silt halo connects it to the
+    // moving lake instead of leaving a clean card edge over flat water.
+    float ellipse = length(vec2(d.x / max(.1, pad.z * 1.08),
+                                d.y / max(.1, pad.z * .73)));
+    float inner = smoothstep(.78, .94, ellipse);
+    float outer = 1.0 - smoothstep(.96, 1.20, ellipse);
+    wetSkirt = max(wetSkirt, pad.w * inner * outer);
+    float downstream = smoothstep(-.35, .65, d.y / max(.1, pad.z));
+    float halo = smoothstep(.94, 1.08, ellipse)
+      * (1.0 - smoothstep(1.08, 1.62, ellipse));
+    stirredSilt = max(stirredSilt, pad.w * halo * mix(.45, 1.0, downstream));
+  }
+  return vec2(wetSkirt, stirredSilt);
+}
+
 vec2 fragmentContact(vec2 p) {
   float ridge = 0.0;
   float cavity = 0.0;
@@ -242,12 +282,12 @@ vec2 fragmentContact(vec2 p) {
     vec4 shape = uImpulseShape[i];
     vec4 direction = uImpulseDirection[i];
     float age = uTime - impulse.z;
-    float alive = step(0.0, age) * step(age, 4.8) * direction.w;
+    float alive = step(0.0, age) * step(age, 5.6) * direction.w;
     float distanceToContact = length(p - impulse.xy);
     float radius = shape.x + age * shape.y;
-    float width = .105 + age * .075;
+    float width = .14 + age * .035;
     float ring = exp(-pow((distanceToContact - radius) / width, 2.0));
-    float memory = exp(-age * .31);
+    float memory = exp(-age * .22);
     ridge += alive * impulse.w * ring * memory;
     cavity += alive * impulse.w
       * exp(-distanceToContact * distanceToContact / (.18 + age * 1.15))
@@ -282,6 +322,7 @@ void main() {
   float objectCoverage;
   vec3 objectReflection = sceneCoupledReflection(vWorldPosition.xz, N, objectCoverage);
   reflectedSky = mix(reflectedSky, objectReflection, objectCoverage);
+  vec2 padCoupling = padWaterlineCoupling(vWorldPosition.xz);
 
   // The physically intersected gate resolves near the horizon. A restrained,
   // broken lacquer trail carries its dominant colour into gameplay-distance
@@ -322,6 +363,10 @@ void main() {
   float glint = pow(max(dot(N, H), 0.0), 380.0);
   float reflectionWeight = .25 + fresnel * .73;
   vec3 color = mix(body, reflectedSky, reflectionWeight);
+
+  color *= 1.0 - padCoupling.x * .38;
+  color = mix(color, vec3(.22, .30, .20), padCoupling.y * .24);
+  color += uShallowColor * padCoupling.y * .055;
   color += uSunColor * (broadSpecular * .13 + glint * .34);
   color += uShallowColor * shallows * .08;
   color += uHorizonColor * smoothstep(.16, .92, vInteraction) * .11;
@@ -330,13 +375,18 @@ void main() {
   // the water grid again. Keep shader foam broad and subtle; pooled crowns and
   // droplets carry the crisp contact read without turning a triangle white.
   vec2 fragmentHistory = fragmentContact(vWorldPosition.xz);
-  float contact = smoothstep(.09, .66, fragmentHistory.x);
+  float contact = smoothstep(.055, .48, fragmentHistory.x);
   float cavity = smoothstep(.08, .58, fragmentHistory.y);
   // Alternating luminance is essential: rings survive grayscale while remaining
   // green-water phenomena, not white decals.
-  color *= 1.0 - cavity * .20;
-  color = mix(color, vec3(.24, .57, .50), contact * .31);
-  color += vec3(.13, .25, .22) * contact * .12;
+  color *= 1.0 - cavity * .30;
+  // A dark outer trough plus restrained pale crest survives downsampling and
+  // grayscale without reading as a pasted white decal.
+  float trough = smoothstep(.025, .22, fragmentHistory.x)
+    * (1.0 - smoothstep(.34, .82, fragmentHistory.x));
+  color *= 1.0 - trough * .18;
+  color = mix(color, vec3(.38, .72, .64), contact * .46);
+  color += vec3(.16, .29, .25) * contact * .16;
   gl_FragColor = vec4(color, uOpacity);
   #include <fog_fragment>
 }
@@ -351,7 +401,7 @@ function tierFromImpact(impactSpeed = 0, horizontalSpeed = 0) {
 
 function tierSettings(tier) {
   if (tier === "hard")
-    return { amplitude: 1, rings: 3, droplets: 34, crown: 1, pad: 1 };
+    return { amplitude: 1, rings: 1, droplets: 34, crown: 1, pad: 1 };
   if (tier === "normal")
     return { amplitude: 0.68, rings: 2, droplets: 17, crown: 0.7, pad: 0.58 };
   return { amplitude: 0.34, rings: 1, droplets: 4, crown: 0.3, pad: 0.24 };
@@ -386,12 +436,14 @@ export function createWaterSystem({
     { length: MAX_REFLECTED_PADS },
     () => new THREE.Vector4(9999, 9999, 1, 0),
   );
+  const heroReflection = new THREE.Vector4(9999, 9999, 0, 0);
   const uniforms = {
     uTime: { value: 0 },
     uImpulse: { value: impulse },
     uImpulseShape: { value: impulseShape },
     uImpulseDirection: { value: impulseDirection },
     uReflectedPad: { value: reflectedPad },
+    uHeroReflection: { value: heroReflection },
     uDeepColor: { value: new THREE.Color(colors.deep ?? 0x102f33) },
     uShallowColor: { value: new THREE.Color(colors.shallow ?? 0x285f61) },
     uHorizonColor: { value: new THREE.Color(colors.horizon ?? 0x78958b) },
@@ -462,7 +514,7 @@ export function createWaterSystem({
     roughness: 0.3,
     metalness: 0.0,
     transparent: true,
-    opacity: 0.48,
+    opacity: 0.64,
     side: THREE.DoubleSide,
     depthWrite: false,
     fog: true,
@@ -500,7 +552,8 @@ export function createWaterSystem({
   const direction = new THREE.Vector2();
   const particleDirection = new THREE.Vector3();
   const particleQuaternion = new THREE.Quaternion();
-  let impulseCursor = 0;
+  let impactCursor = 0;
+  let wakeCursor = 0;
   let dropletCursor = 0;
   let crownCursor = 0;
   let time = 0;
@@ -525,12 +578,20 @@ export function createWaterSystem({
     dirX,
     dirZ,
     wake,
+    birthOffset = 0,
+    channel = "impact",
   ) {
-    const i = impulseCursor;
-    impulse[i].set(x, z, time, amplitude);
+    const i = channel === "wake"
+      ? IMPACT_IMPULSES + wakeCursor
+      : impactCursor;
+    impulse[i].set(x, z, time + birthOffset, amplitude);
     impulseShape[i].set(initialRadius, speed, frequency, decay);
     impulseDirection[i].set(dirX, dirZ, wake, 1);
-    impulseCursor = (i + 1) % MAX_IMPULSES;
+    if (channel === "wake") {
+      wakeCursor = (wakeCursor + 1) % WAKE_IMPULSES;
+    } else {
+      impactCursor = (impactCursor + 1) % IMPACT_IMPULSES;
+    }
   }
 
   function emitDroplets(position, count, strength, dirX, dirZ) {
@@ -559,7 +620,7 @@ export function createWaterSystem({
     const i = crownCursor;
     crownPosition[i].set(position.x, y + 0.012, position.z);
     crownLife[i] = 0.0001;
-    crownLifetime[i] = 0.22 + strength * 0.16;
+    crownLifetime[i] = 0.32 + strength * 0.22;
     crownStrength[i] = strength;
     crownCursor = (i + 1) % maxCrowns;
   }
@@ -584,7 +645,7 @@ export function createWaterSystem({
         position.z,
         settings.amplitude * (1 - ring * 0.16),
         0.1 + ring * 0.13,
-        1.45 + ring * 0.38,
+        0.8 + ring * 0.21,
         9.5 + ring * 1.2,
         0.82 + ring * 0.18,
         direction.x,
@@ -592,6 +653,7 @@ export function createWaterSystem({
         horizontalSpeed > 1.1 && ring === 0
           ? Math.min(1, horizontalSpeed / 6)
           : 0,
+        ring === 0 ? 0 : ring === 1 ? 0.16 : 0.34,
       );
     }
     emitDroplets(
@@ -621,6 +683,8 @@ export function createWaterSystem({
       direction.x,
       direction.y,
       Math.min(1, speed / 5),
+      0,
+      "wake",
     );
   }
 
@@ -770,6 +834,15 @@ export function createWaterSystem({
     crowns.instanceMatrix.needsUpdate = true;
   }
 
+  function setHeroReflection(position, yaw = 0, enabled = true) {
+    if (!position) {
+      heroReflection.w = 0;
+      return;
+    }
+    heroReflection.set(position.x, position.z, yaw, enabled ? 1 : 0);
+  }
+
+
   function dispose() {
     scene.remove(mesh, droplets, crowns);
     mesh.geometry.dispose();
@@ -789,6 +862,7 @@ export function createWaterSystem({
     stampWake,
     registerPad,
     impulsePad,
+    setHeroReflection,
     classifyTier: tierFromImpact,
     dispose,
     stats: { maxImpulses: MAX_IMPULSES, maxDroplets, maxCrowns, drawCalls: 3 },

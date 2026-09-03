@@ -114,6 +114,11 @@ const waterSystem = createWaterSystem({
     sun: 0xf3cd8a,
   },
 });
+// Audit-only hook for deterministic contact-memory captures. Keeping this
+// behind an explicit query flag avoids expanding the normal runtime surface.
+if (new URLSearchParams(location.search).has("waterAudit")) {
+  window.__WATER_AUDIT__ = waterSystem;
+}
 const moonMaterial = new THREE.MeshBasicMaterial({
   color: 0xf3d9a5,
   transparent: true,
@@ -543,6 +548,7 @@ function animate(now) {
       s.position.y = 1 + Math.sin(t * 3 + s.id) * 0.15;
     }
   }
+  waterSystem.setHeroReflection(hero.position, hero.rotation.y, hero.visible);
   waterSystem.update(dt, t);
   const shrineRevealed = hero.position.z < -15;
   for (const landmark of shrineRevealLandmarks) {
