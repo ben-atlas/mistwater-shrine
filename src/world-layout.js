@@ -265,6 +265,34 @@ export const LANDMARKS = Object.freeze([
 ]);
 
 export const DRESSING = Object.freeze([
+  {
+    id: "sanctuary_basin_shell",
+    chunk: "shrine_reveal",
+    asset: "./assets/sanctuary_basin_shell.js",
+    // Continuous rear terrace and canopy/karst shoulders replace the terminal
+    // mist void. It belongs to the static route chunk so its four surface
+    // families merge instead of costing one draw per source material.
+    position: [0.45, -0.62, -56.3],
+    scale: [1, 1, 1],
+    rotation: [0, 0, 0],
+  },
+  // Continuous low waterline courses turn the isolated bank modules into an
+  // authored basin. Each pair is baked into its route chunk, so the added
+  // continuity costs three shared-material draws rather than prop-per-rock.
+  ...[
+    ["arrival", -8.55, -3.2, 1.57], ["arrival", 8.7, -4.4, -1.57],
+    ["green_tunnel", -8.35, -13.0, 1.57], ["green_tunnel", 8.45, -14.0, -1.57],
+    ["green_tunnel", -8.15, -22.4, 1.57], ["green_tunnel", 8.25, -23.4, -1.57],
+    ["shrine_reveal", -8.65, -32.0, 1.57], ["shrine_reveal", 8.8, -33.0, -1.57],
+    ["shrine_reveal", -8.9, -41.1, 1.57], ["shrine_reveal", 9.0, -42.0, -1.57],
+  ].map(([chunk, x, z, yaw], index) => ({
+    id: `basin_edge_${index}`,
+    chunk,
+    asset: "./assets/shore_transition.js",
+    position: [x, -0.3, z],
+    scale: [1, 1, 1],
+    rotation: [0, yaw, 0],
+  })),
   // Arrival framing: asymmetrical and close enough to break the frame edge.
   {
     id: "arr_bank_l",
@@ -481,11 +509,11 @@ export const CAMERA_VOLUMES = Object.freeze([
     id: "landing_resolve",
     zFrom: -41.0,
     zTo: -49.0,
-    distance: 10.2,
-    height: 4.35,
-    fov: 58,
-    targetLift: 1.35,
-    lookAhead: 4.0,
+    distance: 8.8,
+    height: 3.35,
+    fov: 51,
+    targetLift: 1.7,
+    lookAhead: 5.2,
     lateralBias: 0.0,
   },
 ]);

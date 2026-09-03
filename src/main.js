@@ -192,11 +192,18 @@ for (const item of availableDressing) {
 for (const group of dressingGroups.values()) {
   const baked = bakeStatic(group);
   baked.userData.chunk = group.name.replace("DressingChunk_", "");
+  // Establish the arrival cull state before the first rendered frame. The
+  // per-frame controller keeps this updated later, but leaving every chunk
+  // visible for one startup frame causes a real mobile draw/triangle spike.
+  baked.visible =
+    baked.userData.chunk === "far_composition" ||
+    baked.userData.chunk === "arrival";
   dressingBakes.push(baked);
   scene.add(baked);
 }
 let spiritReward = null;
 let spiritJoints = {};
+const shrineRevealLandmarks = [];
 for (const item of LANDMARKS) {
   const object = await ASSET(item.asset, {
     keepHierarchy: item.keepHierarchy === true,
@@ -204,6 +211,13 @@ for (const item of LANDMARKS) {
   object.position.set(...item.position);
   object.scale.set(...item.scale);
   object.rotation.set(...item.rotation);
+  if (item.chunk === "shrine_reveal") {
+    // The green tunnel is a complete near-field occluder at the start. Keep
+    // terminal landmarks out of the render list until the authored reveal,
+    // rather than depending on aspect-ratio-sensitive frustum rejection.
+    object.visible = false;
+    shrineRevealLandmarks.push(object);
+  }
   scene.add(object);
   if (item.id === "spirit_reward") {
     spiritReward = object;
@@ -530,10 +544,13 @@ function animate(now) {
     }
   }
   waterSystem.update(dt, t);
+  const shrineRevealed = hero.position.z < -15;
+  for (const landmark of shrineRevealLandmarks) {
+    landmark.visible = shrineRevealed;
+  }
   if (spiritReward) {
     // The green-tunnel banks fully occlude the shrine before this threshold;
     // avoid spending landmark draws while it cannot contribute to the frame.
-    spiritReward.visible = hero.position.z < -15;
     const core = spiritJoints.spirit_core;
     const ribbonFront = spiritJoints.ribbon_front;
     const ribbonBack = spiritJoints.ribbon_back;
