@@ -1,0 +1,230 @@
+[
+ {
+  "ok": true,
+  "mounts": null,
+  "meshes": 55,
+  "tris": 4540,
+  "materials": 2,
+  "size": [
+   1.834,
+   5.4,
+   0.66
+  ],
+  "groundOffset": 0,
+  "centreOffset": [
+   -0.025,
+   -0.06
+  ],
+  "sides": {
+   "front": {
+    "coverage": 0.0788,
+    "edgeDensity": 0.2537
+   },
+   "right": {
+    "coverage": 0.056,
+    "edgeDensity": 0.2036
+   },
+   "back": {
+    "coverage": 0.0783,
+    "edgeDensity": 0.1859
+   },
+   "left": {
+    "coverage": 0.0551,
+    "edgeDensity": 0.2156
+   }
+  },
+  "error": null,
+  "name": "bamboo_cluster",
+  "problems": []
+ },
+ {
+  "ok": true,
+  "mounts": null,
+  "meshes": 12,
+  "tris": 2396,
+  "materials": 4,
+  "size": [
+   0.834,
+   1.399,
+   0.914
+  ],
+  "groundOffset": 0,
+  "centreOffset": [
+   0,
+   0
+  ],
+  "sides": {
+   "front": {
+    "coverage": 0.1616,
+    "edgeDensity": 0.0553
+   },
+   "right": {
+    "coverage": 0.1228,
+    "edgeDensity": 0.0561
+   },
+   "back": {
+    "coverage": 0.1512,
+    "edgeDensity": 0.0417
+   },
+   "left": {
+    "coverage": 0.1367,
+    "edgeDensity": 0.0462
+   }
+  },
+  "error": null,
+  "name": "forest_guardian",
+  "problems": []
+ },
+ {
+  "ok": true,
+  "mounts": null,
+  "meshes": 17,
+  "tris": 823,
+  "materials": 2,
+  "size": [
+   2.695,
+   0.34,
+   2.59
+  ],
+  "groundOffset": 0,
+  "centreOffset": [
+   0,
+   0
+  ],
+  "sides": {
+   "front": {
+    "coverage": 0.1438,
+    "edgeDensity": 0.2534
+   },
+   "right": {
+    "coverage": 0.1424,
+    "edgeDensity": 0.2736
+   },
+   "back": {
+    "coverage": 0.1449,
+    "edgeDensity": 0.2865
+   },
+   "left": {
+    "coverage": 0.1421,
+    "edgeDensity": 0.2893
+   }
+  },
+  "error": null,
+  "name": "lotus_leaf",
+  "problems": []
+ },
+ {
+  "ok": true,
+  "mounts": null,
+  "meshes": 8,
+  "tris": 288,
+  "materials": 2,
+  "size": [
+   11.232,
+   13,
+   6.989
+  ],
+  "groundOffset": 0,
+  "centreOffset": [
+   -0.052,
+   0.206
+  ],
+  "sides": {
+   "front": {
+    "coverage": 0.1643,
+    "edgeDensity": 0.1857
+   },
+   "right": {
+    "coverage": 0.1295,
+    "edgeDensity": 0.1695
+   },
+   "back": {
+    "coverage": 0.1674,
+    "edgeDensity": 0.1302
+   },
+   "left": {
+    "coverage": 0.128,
+    "edgeDensity": 0.145
+   }
+  },
+  "error": null,
+  "name": "mountain_spire",
+  "problems": []
+ },
+ {
+  "ok": true,
+  "mounts": null,
+  "meshes": 23,
+  "tris": 844,
+  "materials": 3,
+  "size": [
+   8.403,
+   6.43,
+   1.25
+  ],
+  "groundOffset": 0,
+  "centreOffset": [
+   0,
+   0
+  ],
+  "sides": {
+   "front": {
+    "coverage": 0.1649,
+    "edgeDensity": 0.0935
+   },
+   "right": {
+    "coverage": 0.0646,
+    "edgeDensity": 0.0543
+   },
+   "back": {
+    "coverage": 0.1643,
+    "edgeDensity": 0.1142
+   },
+   "left": {
+    "coverage": 0.0678,
+    "edgeDensity": 0.1113
+   }
+  },
+  "error": null,
+  "name": "shrine_gate",
+  "problems": []
+ },
+ {
+  "ok": true,
+  "mounts": null,
+  "meshes": 10,
+  "tris": 232,
+  "materials": 3,
+  "size": [
+   1.1,
+   2.52,
+   1.1
+  ],
+  "groundOffset": 0,
+  "centreOffset": [
+   0,
+   0
+  ],
+  "sides": {
+   "front": {
+    "coverage": 0.173,
+    "edgeDensity": 0.0576
+   },
+   "right": {
+    "coverage": 0.173,
+    "edgeDensity": 0.059
+   },
+   "back": {
+    "coverage": 0.173,
+    "edgeDensity": 0.0608
+   },
+   "left": {
+    "coverage": 0.1728,
+    "edgeDensity": 0.0601
+   }
+  },
+  "error": null,
+  "name": "stone_lantern",
+  "problems": []
+ }
+]
