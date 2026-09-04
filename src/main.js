@@ -297,6 +297,68 @@ scene.add(hero);
 hero.position.set(TRAVERSAL[0].x, pads[0].top, TRAVERSAL[0].z);
 const joints = hero.userData.joints || {};
 const guardianAnimation = createGuardianAnimation(joints);
+
+// Checkpoint 2 combat is deliberately built from low-poly primitives so the
+// two crocodile roles read clearly without adding another asset dependency.
+const enemyBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x315b43, roughness: 0.82 });
+const enemyBellyMaterial = new THREE.MeshStandardMaterial({ color: 0x8da56e, roughness: 0.9 });
+const warningMaterial = new THREE.MeshBasicMaterial({ color: 0xff7b3d, transparent: true, opacity: 0.62, depthWrite: false });
+const enemies = [];
+function createCrocodile(role, x, z) {
+  const root = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.42, 1.55), enemyBodyMaterial);
+  body.position.y = 0.36; body.castShadow = true;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.3, 0.72), enemyBellyMaterial);
+  head.position.set(0, 0.37, -0.96); head.castShadow = true;
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.31, 1.35, 5), enemyBodyMaterial);
+  tail.rotation.x = Math.PI * 0.5; tail.position.set(0, 0.35, 1.25);
+  const roleMark = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.045, 6, 18), new THREE.MeshBasicMaterial({ color: role === "ranged" ? 0xffa13d : 0xef4e42 }));
+  roleMark.rotation.x = Math.PI * 0.5; roleMark.position.y = 0.72;
+  root.add(body, head, tail, roleMark); root.position.set(x, 0.22, z); scene.add(root);
+  const enemy = { role, root, hp: role === "ranged" ? 2 : 3, maxHp: role === "ranged" ? 2 : 3, cooldown: role === "ranged" ? 1.4 : 0.55, windup: 0, stagger: 0, flash: 0, alive: true, roleMark };
+  enemies.push(enemy); return enemy;
+}
+createCrocodile("melee", 0.55, -16.9);
+createCrocodile("ranged", -3.35, -20.45);
+createCrocodile("melee", 2.25, -28.25);
+const bombs = [];
+const bombGeometry = new THREE.IcosahedronGeometry(0.22, 1);
+const bombMaterial = new THREE.MeshStandardMaterial({ color: 0x382b22, emissive: 0xff5426, emissiveIntensity: 0.8 });
+function launchBomb(enemy) {
+  const marker = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.62, 24), warningMaterial.clone());
+  marker.rotation.x = -Math.PI * 0.5; marker.position.set(hero.position.x, 0.035, hero.position.z); scene.add(marker);
+  const mesh = new THREE.Mesh(bombGeometry, bombMaterial); mesh.position.copy(enemy.root.position).add(new THREE.Vector3(0, .8, 0)); scene.add(mesh);
+  bombs.push({ mesh, marker, start: mesh.position.clone(), target: hero.position.clone(), age: 0, duration: 1.05 });
+}
+let playerHealth = 100, attackCooldown = 0, attackActive = 0, dodgeTime = 0, invulnerable = 0, hitStop = 0, playerHits = 0, enemiesDefeated = 0;
+const healthFill = document.getElementById("health-fill");
+const combatStatus = document.getElementById("combat-status");
+function damagePlayer(amount, source) {
+  if (invulnerable > 0 || !playing) return false;
+  const guarding = keys.KeyK && dodgeTime <= 0;
+  playerHealth = Math.max(0, playerHealth - (guarding ? Math.ceil(amount * .25) : amount));
+  invulnerable = guarding ? .22 : .65; hitStop = guarding ? .035 : .085; cameraImpact = Math.max(cameraImpact, guarding ? .025 : .075);
+  const away = hero.position.clone().sub(source).setY(0).normalize();
+  hero.position.addScaledVector(away, guarding ? .18 : .72);
+  healthFill.style.width = `${playerHealth}%`;
+  combatStatus.textContent = guarding ? "GUARDED" : "WOUNDED · FIND YOUR FOOTING";
+  if (playerHealth <= 0) {
+    playerHealth = 100; healthFill.style.width = "100%"; combatStatus.textContent = "THE SHRINE RETURNS YOU";
+    hero.position.set(checkpointPad.x, checkpointPad.top, checkpointPad.z);
+  }
+  return true;
+}
+function strike() {
+  if (!playing || attackCooldown > 0) return;
+  attackCooldown = .46; attackActive = .16; combatStatus.textContent = "STAFF ARC";
+  for (const enemy of enemies) {
+    if (!enemy.alive || hero.position.distanceTo(enemy.root.position) > 2.15) continue;
+    const toward = enemy.root.position.clone().sub(hero.position).setY(0).normalize();
+    enemy.hp--; enemy.stagger = .42; enemy.flash = .12; playerHits++; hitStop = .055;
+    enemy.root.position.addScaledVector(toward, .7); cameraImpact = Math.max(cameraImpact, .045);
+    if (enemy.hp <= 0) { enemy.alive = false; enemiesDefeated++; combatStatus.textContent = `WARDEN FALLEN · ${enemies.length - enemiesDefeated} REMAIN`; }
+  }
+}
 const sparks = [];
 const sparkCoreGeometry = new THREE.IcosahedronGeometry(0.16, 2);
 const sparkCoreMaterial = new THREE.MeshStandardMaterial({
@@ -347,6 +409,12 @@ let lastCameraInputAt = -Infinity;
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Space") jump();
+  if (e.code === "KeyJ") strike();
+  if (e.code === "KeyK" && moveSpeed > 0.8 && dodgeTime <= 0) {
+    dodgeTime = .34;
+    invulnerable = Math.max(invulnerable, .42);
+    combatStatus.textContent = "MIST STEP";
+  }
 });
 addEventListener("keyup", (e) => (keys[e.code] = false));
 renderer.domElement.addEventListener("pointerdown", (e) => {
@@ -480,6 +548,12 @@ function animate(now) {
     fpst = now;
   }
   if (playing) {
+    if (hitStop > 0) hitStop = Math.max(0, hitStop - real);
+    const combatDt = hitStop > 0 ? 0 : dt;
+    attackCooldown = Math.max(0, attackCooldown - combatDt);
+    attackActive = Math.max(0, attackActive - combatDt);
+    dodgeTime = Math.max(0, dodgeTime - combatDt);
+    invulnerable = Math.max(0, invulnerable - combatDt);
     const orbitKey = (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
     if (orbitKey) {
       orbitYawTarget = THREE.MathUtils.clamp(
@@ -506,7 +580,7 @@ function animate(now) {
       dx = localX * Math.cos(orbitYaw) + dz * Math.sin(orbitYaw);
       dz = -localX * Math.sin(orbitYaw) + dz * Math.cos(orbitYaw);
     }
-    const targetSpeed = inputLength * 5.2;
+    const targetSpeed = inputLength * 5.2 * (dodgeTime > 0 ? 1.85 : keys.KeyK ? .42 : 1);
     const response = targetSpeed > moveSpeed ? 9 : 13;
     moveSpeed = THREE.MathUtils.damp(moveSpeed, targetSpeed, response, dt);
     moveVelocity.set(dx * moveSpeed, dz * moveSpeed);
@@ -623,7 +697,7 @@ function animate(now) {
     const onShrine =
       Math.abs(hero.position.x - shrineCollision.center[0]) < shrineHalfWidth &&
       Math.abs(hero.position.z - shrineCollision.center[2]) < shrineHalfDepth;
-    if (!won && onShrine && score === 3) {
+    if (!won && onShrine && score === 3 && enemiesDefeated === enemies.length) {
       won = true;
       playing = false;
       document.getElementById("complete").classList.remove("hide");
@@ -657,6 +731,39 @@ function animate(now) {
       s.userData.halo.rotation.z -= dt * 1.35;
       s.userData.halo.rotation.x = Math.PI * 0.5 + Math.sin(t * 1.7 + s.id) * 0.22;
       s.position.y = 1 + Math.sin(t * 3 + s.id) * 0.15;
+    }
+    for (const enemy of enemies) {
+      if (!enemy.alive) { enemy.root.visible = false; continue; }
+      enemy.cooldown -= combatDt; enemy.stagger = Math.max(0, enemy.stagger - combatDt); enemy.flash = Math.max(0, enemy.flash - combatDt);
+      enemy.roleMark.scale.setScalar(enemy.flash > 0 ? 1.7 : 1 + Math.sin(t * 4 + enemy.root.id) * .08);
+      const toHero = hero.position.clone().sub(enemy.root.position); toHero.y = 0;
+      const distance = toHero.length(); enemy.root.rotation.y = Math.atan2(toHero.x, toHero.z) + Math.PI;
+      if (enemy.stagger > 0 || hero.position.z > -12 || hero.position.z < -35) continue;
+      if (enemy.role === "melee") {
+        if (enemy.windup > 0) {
+          enemy.windup -= combatDt; enemy.roleMark.material.color.setHex(0xffca55);
+          if (enemy.windup <= 0 && distance < 1.75) { damagePlayer(22, enemy.root.position); enemy.cooldown = 1.25; }
+        } else if (distance < 1.6 && enemy.cooldown <= 0) {
+          enemy.windup = .48; combatStatus.textContent = "RED FLASH · GUARD OR DODGE";
+        } else if (distance < 6) enemy.root.position.addScaledVector(toHero.normalize(), combatDt * 1.35);
+      } else if (enemy.windup > 0) {
+        enemy.windup -= combatDt; enemy.roleMark.material.color.setHex(0xffdf64);
+        if (enemy.windup <= 0) { launchBomb(enemy); enemy.cooldown = 2.5; }
+      } else if (distance < 10 && enemy.cooldown <= 0) {
+        enemy.windup = .72; combatStatus.textContent = "GOLD RING · BOMB INCOMING";
+      }
+    }
+    for (let i = bombs.length - 1; i >= 0; i--) {
+      const bomb = bombs[i]; bomb.age += combatDt;
+      const p = Math.min(1, bomb.age / bomb.duration);
+      bomb.mesh.position.lerpVectors(bomb.start, bomb.target, p);
+      bomb.mesh.position.y += Math.sin(p * Math.PI) * 3.2;
+      bomb.marker.scale.setScalar(.65 + p * .55); bomb.marker.material.opacity = .35 + p * .45;
+      if (p >= 1) {
+        if (hero.position.distanceTo(bomb.target) < 1.25) damagePlayer(28, bomb.target);
+        waterSystem.emitImpulse({ position: bomb.target, impactSpeed: 7, horizontalSpeed: 0, heading: { x: 0, z: -1 }, tier: "hard" });
+        scene.remove(bomb.mesh, bomb.marker); bombs.splice(i, 1);
+      }
     }
   }
   waterSystem.setHeroReflection(hero.position, hero.rotation.y, hero.visible);
@@ -749,10 +856,10 @@ function animate(now) {
   if (routeHint) {
     routeHint.textContent =
       hero.position.z < -41
-        ? score === 3
+        ? score === 3 && enemiesDefeated === enemies.length
           ? "THE SPIRIT STIRS · ENTER THE GATE"
-          : `THE SHRINE AWAITS ${3 - score} MORE SPARK${3 - score === 1 ? "" : "S"}`
-        : "LEAP BETWEEN LOTUS LEAVES · DOUBLE-TAP SPACE IN THE AIR";
+          : score < 3 ? `THE SHRINE AWAITS ${3 - score} MORE SPARK${3 - score === 1 ? "" : "S"}` : `DEFEAT ${enemies.length - enemiesDefeated} MARSH WARDEN${enemies.length - enemiesDefeated === 1 ? "" : "S"}`
+        : hero.position.z < -12 && enemiesDefeated < enemies.length ? `ENCOUNTER SEALED · ${enemies.length - enemiesDefeated} WARDENS REMAIN` : "LEAP BETWEEN LOTUS LEAVES · DOUBLE-TAP SPACE IN THE AIR";
   }
   renderer.render(scene, camera);
   window.__GAME__ = {
@@ -764,6 +871,8 @@ function animate(now) {
     y: hero.position.y,
     grounded: onGround,
     resets: resetCount,
+    health: playerHealth,
+    combat: { enemiesAlive: enemies.length - enemiesDefeated, enemiesDefeated, bombs: bombs.length, attacking: attackActive > 0, dodging: dodgeTime > 0, guarding: Boolean(keys.KeyK && dodgeTime <= 0), hits: playerHits },
     over: false,
     won,
     draws: renderer.info.render.calls,
@@ -778,6 +887,12 @@ function animate(now) {
   };
 }
 if (deterministicCapture) {
+  window.__COMBAT_TEST__ = {
+    teleport(x, z) { hero.position.x = x; hero.position.z = z; hero.position.y = .65; },
+    enemy(index) { const e = enemies[index]; return { position: [e.root.position.x, e.root.position.z], hp: e.hp, alive: e.alive, role: e.role }; },
+    primeEnemy(index) { enemies[index].hp = 1; enemies[index].cooldown = 0; },
+    launchBomb(index) { launchBomb(enemies[index]); },
+  };
   window.__STEP__ = (count = 1) => {
     const steps = Math.max(0, Math.min(600, Math.floor(Number(count) || 0)));
     for (let i = 0; i < steps; i++) {

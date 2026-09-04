@@ -87,6 +87,21 @@
         font-size: 28px;
         color: #f4c56a;
       }
+      .health {
+        margin-top: 9px;
+        width: 150px;
+        height: 7px;
+        border: 1px solid #ffe9ba88;
+        background: #101a18bb;
+      }
+      .health span {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, #d85d44, #f2c86d);
+        transition: width 0.16s ease;
+      }
+      .combat-status { margin-top: 7px; font: 10px Arial; letter-spacing: .14em; color: #d8ebe2; }
       .hint {
         position: absolute;
         bottom: 22px;
@@ -215,7 +230,7 @@
         </p>
         <button id="begin">ENTER THE MIST</button>
         <p class="desktop-copy">
-          WASD / arrows to move · Drag or Q/E to orbit · Space to leap
+          WASD / arrows to move · Drag or Q/E to orbit · Space leap · J strike · K guard/dodge
         </p>
         <p class="mobile-copy">
           Drag left to move · Drag right to orbit · Tap LEAP again in the air
@@ -233,11 +248,13 @@
     <div class="hud">
       <div class="objective">LANTERN SPARKS</div>
       <div class="score"><span id="score">0</span> / 3</div>
+      <div class="health" aria-label="health"><span id="health-fill"></span></div>
+      <div class="combat-status" id="combat-status">THE MARSH IS WATCHING</div>
       <div class="title">
         <b>MISTWATER SHRINE</b><small>FOLLOW THE LOTUS PATH</small>
       </div>
       <div class="hint" id="route-hint">
-        CAMERA-RELATIVE WASD · DRAG OR Q/E TO ORBIT · SPACE TO LEAP
+        WASD MOVE · DRAG/QE ORBIT · SPACE LEAP · J STRIKE · K GUARD/DODGE
       </div>
     </div>
     <div class="touch"><button id="jump">LEAP</button></div>

@@ -12,6 +12,8 @@ and physical-device performance testing are still in progress.
 - WASD or arrow keys: move relative to the camera
 - Mouse drag or Q/E: orbit the camera (it smoothly recenters after release)
 - Space: leap; press again in the air to double jump
+- J: staff strike
+- K: hold to guard; tap while moving to dodge
 - Touch: drag left to move, drag right to orbit, and use the Leap button
 
 ## Play
