@@ -7,8 +7,8 @@ below have shipped. Each checkpoint requires a deployed, browser-verified build.
 | --- | --- | --- |
 | 1. Camera and directional movement | Complete | Player orbit (drag/Q/E), camera-relative movement, idle recenter, collision pull-in, and speed-scaled look-ahead verified in a deterministic Chromium run. Evidence: `outputs/goal7-checkpoint1-camera.png` and `outputs/goal7-checkpoint1-camera-report.json`. |
 | 2. Enemy gameplay | Complete | Three crocodile wardens: melee pursuit/windups and ranged telegraphed arcing bombs; staff attack, health, guard/dodge, knockback, hit-stop, reactions, defeat state, and shrine objective gate. Deterministic Chromium assertions and visual evidence: `outputs/goal7-checkpoint2-combat.png` and `outputs/goal7-checkpoint2-combat-report.json`. |
-| 3. Lighting and atmosphere | Next | Directional sunlight, cool mist, warm lantern pools, contact shadows, localized fog, and stronger reflected highlights. |
-| 4. Sky and horizon | Pending | Not started. |
+| 3. Lighting and atmosphere | Complete | Warm directional sunlight, cool mist, three lantern pools, contact shadows, eight localized fog banks, and stronger reflected highlights. Deterministic local and permanent-URL verification passed. Evidence: `outputs/goal7-checkpoint3-atmosphere.png` and report. |
+| 4. Sky and horizon | Complete | Five layered cloud banks, two atmospheric mountain ranges, 18 bamboo silhouettes, four submerged ruin gates, seven birds, and three drifting horizon-mist bands. Deterministic browser assertions and visual evidence: `outputs/goal7-checkpoint4-horizon.png` and report. |
 | 5. Branching flooded rescue hub | Pending | Not started. |
 
 Checkpoint 1 browser assertions: orbit changed by more than 0.5 radians,

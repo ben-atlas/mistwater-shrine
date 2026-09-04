@@ -128,6 +128,85 @@ for (const [x, y, z, sx, sy, phase] of [
   scene.add(sprite); mistBanks.push(sprite);
 }
 
+// Checkpoint 4: a deep horizon assembled from inexpensive authored layers.
+// These shapes live beyond the playable basin, so they add scale without
+// changing collision, traversal, or the established shoreline.
+const horizonGroup = new THREE.Group();
+scene.add(horizonGroup);
+
+const cloudTextureCanvas = document.createElement("canvas");
+cloudTextureCanvas.width = 256; cloudTextureCanvas.height = 96;
+const cloudCtx = cloudTextureCanvas.getContext("2d");
+for (const [x, y, r, a] of [[40,55,31,.38],[78,43,41,.48],[122,51,36,.42],[163,39,45,.5],[211,55,32,.34]]) {
+  const g = cloudCtx.createRadialGradient(x,y,2,x,y,r);
+  g.addColorStop(0, `rgba(229,239,232,${a})`);
+  g.addColorStop(.58, `rgba(203,222,216,${a * .62})`);
+  g.addColorStop(1, "rgba(177,204,199,0)");
+  cloudCtx.fillStyle = g; cloudCtx.fillRect(x-r,y-r,r*2,r*2);
+}
+const cloudTexture = new THREE.CanvasTexture(cloudTextureCanvas);
+const cloudLayers = [];
+for (const [x,y,z,sx,sy,opacity,phase] of [
+  [-43,31,-102,48,14,.54,.2],[7,35,-118,62,17,.46,2.1],[51,28,-96,44,13,.5,4.4],
+  [-28,22,-82,36,10,.3,1.2],[31,19,-76,31,9,.28,3.5],
+]) {
+  const cloud = new THREE.Sprite(new THREE.SpriteMaterial({map:cloudTexture,color:0xe2eee8,transparent:true,opacity,depthWrite:false,fog:false}));
+  cloud.position.set(x,y,z); cloud.scale.set(sx,sy,1); cloud.userData.baseX=x; cloud.userData.phase=phase;
+  horizonGroup.add(cloud); cloudLayers.push(cloud);
+}
+
+function mountainLayer(z, color, opacity, peaks) {
+  const shape = new THREE.Shape(); shape.moveTo(-82,-7);
+  for (const [x,y] of peaks) shape.lineTo(x,y);
+  shape.lineTo(82,-7); shape.closePath();
+  const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({color,transparent:true,opacity,depthWrite:false,fog:true,side:THREE.DoubleSide}));
+  mesh.position.set(0,3,z); horizonGroup.add(mesh); return mesh;
+}
+const mountainLayers = [
+  mountainLayer(-112,0x78918c,.42,[[-82,0],[-64,12],[-51,5],[-36,21],[-20,7],[-2,17],[17,4],[36,20],[55,7],[70,14],[82,2]]),
+  mountainLayer(-94,0x526f69,.55,[[-82,-1],[-68,7],[-58,3],[-43,16],[-29,5],[-11,12],[5,3],[22,14],[39,4],[56,13],[70,5],[82,9]]),
+];
+
+const bambooSilhouettes = [];
+const bambooMaterial = new THREE.MeshBasicMaterial({color:0x173d37,transparent:true,opacity:.62,fog:true});
+for (const side of [-1,1]) for (let i=0;i<9;i++) {
+  const h = 7 + (i % 4) * 1.55;
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(.07,.11,h,5),bambooMaterial);
+  stem.position.set(side * (12.5 + i * 1.65),h*.5-1,-68-i*1.7);
+  stem.rotation.z = side * (.025 + (i%3)*.018); horizonGroup.add(stem); bambooSilhouettes.push(stem);
+  for (let j=0;j<3;j++) {
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(.48,5,3),bambooMaterial);
+    leaf.scale.set(2.1,.18,.5); leaf.position.set(stem.position.x-side*(.35+j*.18),h-1.1-j*1.25,stem.position.z);
+    leaf.rotation.z=side*(.4+j*.18); horizonGroup.add(leaf);
+  }
+}
+
+const submergedRuins = [];
+const ruinMaterial = new THREE.MeshStandardMaterial({color:0x405c55,roughness:.9,metalness:0});
+for (const [x,z,rot] of [[-8.7,-52,.16],[8.2,-57,-.22],[-11.5,-63,.32],[10.7,-69,-.18]]) {
+  const ruin = new THREE.Group();
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(3.6,.42,.72),ruinMaterial);
+  lintel.position.y=.58; lintel.rotation.z=rot; ruin.add(lintel);
+  for (const px of [-1.38,1.38]) { const pillar=new THREE.Mesh(new THREE.BoxGeometry(.55,2.7,.62),ruinMaterial); pillar.position.set(px,-.42,0); pillar.rotation.z=rot*.55; ruin.add(pillar); }
+  ruin.position.set(x,-.82,z); ruin.rotation.y=rot; horizonGroup.add(ruin); submergedRuins.push(ruin);
+}
+
+const birds = [];
+const birdMaterial = new THREE.LineBasicMaterial({color:0x203b39,transparent:true,opacity:.7,fog:false});
+for (let i=0;i<7;i++) {
+  const wing = 0.42 + i*.045;
+  const geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-wing,.12,0),new THREE.Vector3(0,0,0),new THREE.Vector3(wing,.12,0)]);
+  const bird = new THREE.Line(geometry,birdMaterial); bird.position.set(-15+i*5.1,13+(i%3)*1.7,-70-i*3.2); bird.userData.baseX=bird.position.x; bird.userData.phase=i*.83;
+  horizonGroup.add(bird); birds.push(bird);
+}
+
+const horizonMist = [];
+for (const [x,z,s,phase] of [[-27,-74,31,.4],[0,-80,39,2.2],[29,-73,32,4.1]]) {
+  const band = new THREE.Sprite(new THREE.SpriteMaterial({map:mistTexture,color:0xc8ded8,transparent:true,opacity:.34,depthWrite:false,fog:false}));
+  band.position.set(x,3.1,z); band.scale.set(s,6.2,1); band.userData.baseX=x; band.userData.phase=phase;
+  horizonGroup.add(band); horizonMist.push(band);
+}
+
 const contactMaterial = new THREE.MeshBasicMaterial({
   color: 0x071a18, transparent: true, opacity: .34, depthWrite: false,
   blending: THREE.MultiplyBlending,
@@ -840,6 +919,19 @@ function animate(now) {
     mist.position.y = mist.userData.baseY + Math.sin(t * .23 + phase) * .1;
     mist.material.opacity = .22 + (Math.sin(t * .31 + phase) * .5 + .5) * .14;
   }
+  for (let i = 0; i < cloudLayers.length; i++) {
+    const cloud = cloudLayers[i];
+    cloud.position.x = cloud.userData.baseX + Math.sin(t * .018 + cloud.userData.phase) * (3.5 + i);
+  }
+  for (const band of horizonMist) {
+    band.position.x = band.userData.baseX + Math.sin(t * .052 + band.userData.phase) * 4.2;
+    band.material.opacity = .27 + Math.sin(t * .12 + band.userData.phase) * .07;
+  }
+  for (const bird of birds) {
+    bird.position.x = bird.userData.baseX + Math.sin(t * .09 + bird.userData.phase) * 3.2;
+    bird.position.y += Math.sin(t * 1.8 + bird.userData.phase) * .0015;
+    bird.rotation.z = Math.sin(t * 2.1 + bird.userData.phase) * .08;
+  }
   for (let i = 0; i < lanternPools.length; i++) {
     lanternPools[i].material.opacity = .095 + Math.sin(t * 2.2 + i * 1.7) * .018;
   }
@@ -951,6 +1043,7 @@ function animate(now) {
     health: playerHealth,
     combat: { enemiesAlive: enemies.length - enemiesDefeated, enemiesDefeated, bombs: bombs.length, attacking: attackActive > 0, dodging: dodgeTime > 0, guarding: Boolean(keys.KeyK && dodgeTime <= 0), hits: playerHits },
     atmosphere: { mistBanks: mistBanks.length, lanternPools: lanternPools.length, sunIntensity: sun.intensity, fogDensity: scene.fog.density, contactShadows: 1 + enemies.filter((enemy) => enemy.alive).length },
+    horizon: { cloudLayers: cloudLayers.length, mountainLayers: mountainLayers.length, bambooSilhouettes: bambooSilhouettes.length, submergedRuins: submergedRuins.length, birds: birds.length, mistBands: horizonMist.length },
     over: false,
     won,
     draws: renderer.info.render.calls,
