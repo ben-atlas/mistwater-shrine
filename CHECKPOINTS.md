@@ -36,14 +36,14 @@ hub containing islands, loops, shortcuts, enemy positions, and a central Pagoda.
 
 ## 5 — Branching flooded rescue hub (2026-09-04)
 
-Status: implemented and locally browser verified.
+Status: implemented, deployed, and browser verified.
 
 - Added six broad, playable islands that replace the forward-only route with a flooded hub.
 - Authored west, east, and far rescue loops plus a combat-gated cross-water shortcut.
 - Moved the three crocodile wardens onto explicit island encounter posts.
 - Reframed lantern sparks as three named keeper rescues on separate branches.
 - Added a lit, three-tier central pagoda visible across the hub.
-- Checkpoint 5, checkpoint 4, and updated production-input combat assertions pass with no browser errors.
+- Checkpoint 5 passed at the permanent URL; checkpoint 4 and updated production-input combat regressions also pass with no browser errors.
 
 Evidence is retained at `outputs/goal7-checkpoint5-rescue-hub.png` and
 `outputs/goal7-checkpoint5-rescue-hub-report.json` in the Telegram workspace.
