@@ -280,9 +280,9 @@ export const DRESSING = Object.freeze([
   // authored basin. Each pair is baked into its route chunk, so the added
   // continuity costs three shared-material draws rather than prop-per-rock.
   ...[
-    ["arrival", -8.55, -3.2, 1.57], ["arrival", 8.7, -4.4, -1.57],
-    ["green_tunnel", -8.35, -13.0, 1.57], ["green_tunnel", 8.45, -14.0, -1.57],
-    ["green_tunnel", -8.15, -22.4, 1.57], ["green_tunnel", 8.25, -23.4, -1.57],
+    ["arrival", -6.95, -3.2, 1.57], ["arrival", 6.85, -4.4, -1.57],
+    ["green_tunnel", -6.9, -13.0, 1.57], ["green_tunnel", 6.8, -14.0, -1.57],
+    ["green_tunnel", -6.75, -22.4, 1.57], ["green_tunnel", 6.7, -23.4, -1.57],
     ["shrine_reveal", -8.65, -32.0, 1.57], ["shrine_reveal", 8.8, -33.0, -1.57],
     ["shrine_reveal", -8.9, -41.1, 1.57], ["shrine_reveal", 9.0, -42.0, -1.57],
   ].map(([chunk, x, z, yaw], index) => ({
@@ -291,6 +291,50 @@ export const DRESSING = Object.freeze([
     asset: "./assets/shore_transition.js",
     position: [x, -0.3, z],
     scale: [1, 1, 1],
+    rotation: [0, yaw, 0],
+    ...(chunk === "arrival" ? {
+      waterFootprints: [
+        // Unequal overlapping phrases follow the authored shelf's turns. The
+        // water shader further perturbs each outline, avoiding a necklace of
+        // smooth analytic ellipses while retaining a fixed uniform budget.
+        { center: [-1.45, -0.06], radii: [2.20, 0.64], yaw: -0.08, role: "toe" },
+        { center: [0.62, 0.05], radii: [1.82, 0.72], yaw: 0.14, role: "wet" },
+        { center: [2.02, 0.28], radii: [1.34, 0.50], yaw: -0.23, role: "toe" },
+        { center: [0.05, -0.34], radii: [1.16, 0.44], yaw: 0.31, role: "reed" },
+      ],
+    } : {}),
+  })),
+  // Non-collidable habitat pads break the former oversized-lotus runway into
+  // an inhabited flooded basin.  They deliberately stay outside the authored
+  // landing envelopes: traversal readability and collision remain owned by
+  // TRAVERSAL, while these smaller leaves supply near/middle/far scale and
+  // asymmetric occlusion hand-offs.  The source lotus is already a verified
+  // 404 winner, so this is composition work rather than a proxy asset.
+  ...[
+    ["arrival", -5.55, -0.08, 1.25, 0.52, 0.18],
+    ["arrival",  4.65, -0.10, 0.10, 0.38, 2.74],
+    ["arrival", -6.25, -0.12, -2.65, 0.34, 4.91],
+    ["arrival",  5.85, -0.09, -4.75, 0.48, 1.33],
+    ["arrival", -4.75, -0.11, -6.65, 0.41, 3.62],
+    ["arrival",  4.95, -0.13, -8.20, 0.31, 5.36],
+    ["green_tunnel",  6.05, -0.10, -10.55, 0.55, 0.71],
+    ["green_tunnel", -5.35, -0.13, -12.10, 0.36, 2.43],
+    ["green_tunnel", -6.20, -0.08, -15.15, 0.49, 4.28],
+    ["green_tunnel",  5.05, -0.12, -17.25, 0.33, 1.82],
+    ["green_tunnel", -5.15, -0.10, -19.05, 0.44, 5.12],
+    ["green_tunnel",  6.15, -0.11, -21.20, 0.39, 3.17],
+    ["green_tunnel",  4.95, -0.09, -24.25, 0.51, 0.38],
+    ["green_tunnel", -5.85, -0.13, -26.30, 0.32, 2.91],
+    ["shrine_reveal", -6.25, -0.10, -29.15, 0.47, 4.56],
+    ["shrine_reveal",  6.05, -0.12, -32.10, 0.35, 1.54],
+    ["shrine_reveal", -5.45, -0.09, -35.35, 0.42, 5.68],
+    ["shrine_reveal",  5.55, -0.11, -38.15, 0.30, 2.26],
+  ].map(([chunk, x, y, z, scale, yaw], index) => ({
+    id: `habitat_lotus_${index}`,
+    chunk,
+    asset: "./assets/lotus_leaf_traversal.js",
+    position: [x, y, z],
+    scale: [scale, scale * (0.88 + (index % 3) * 0.06), scale],
     rotation: [0, yaw, 0],
   })),
   // Arrival framing: asymmetrical and close enough to break the frame edge.
@@ -301,6 +345,11 @@ export const DRESSING = Object.freeze([
     position: [-8.35, -0.36, 2.1],
     scale: [1, 1, 1],
     rotation: [0, 0.28, 0],
+    waterFootprints: [
+      { center: [0.15, 0.3], radii: [3.55, 1.65], yaw: -0.14, role: "wet" },
+      { center: [2.25, 1.0], radii: [2.35, 0.82], yaw: 0.34, role: "toe" },
+      { center: [-1.65, -1.2], radii: [1.7, 0.65], yaw: -0.42, role: "toe" },
+    ],
   },
   {
     id: "arr_bamboo_l",
@@ -309,6 +358,10 @@ export const DRESSING = Object.freeze([
     position: [-7.05, -0.18, 0.8],
     scale: [1.12, 1.12, 1.12],
     rotation: [0, 0.63, -0.035],
+    waterFootprints: [
+      { center: [0.15, 0.05], radii: [1.65, 1.05], yaw: 0.1, role: "reed" },
+      { center: [0.75, -0.7], radii: [1.25, 0.62], yaw: -0.35, role: "reed" },
+    ],
   },
   {
     id: "arr_bank_r",
@@ -317,6 +370,11 @@ export const DRESSING = Object.freeze([
     position: [8.05, -0.28, -3.2],
     scale: [1, 1, 1],
     rotation: [0, -0.51, 0],
+    waterFootprints: [
+      { center: [-0.25, 0.1], radii: [3.35, 1.5], yaw: 0.2, role: "wet" },
+      { center: [-2.1, 0.95], radii: [2.1, 0.76], yaw: -0.28, role: "toe" },
+      { center: [1.7, -1.0], radii: [1.55, 0.58], yaw: 0.46, role: "toe" },
+    ],
   },
   {
     id: "arr_reeds_r",

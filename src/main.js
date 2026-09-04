@@ -119,6 +119,8 @@ const waterSystem = createWaterSystem({
 if (new URLSearchParams(location.search).has("waterAudit")) {
   window.__WATER_AUDIT__ = waterSystem;
 }
+const shoreAuditMode = new URLSearchParams(location.search).get("shoreAudit");
+if (shoreAuditMode) waterSystem.setShoreDebug(shoreAuditMode);
 const moonMaterial = new THREE.MeshBasicMaterial({
   color: 0xf3d9a5,
   transparent: true,
@@ -179,6 +181,46 @@ const availableDressing = [...DRESSING, ...BACKGROUND]
           ? "./assets/karst_arch_b.js"
           : item.asset,
   }));
+// Register the actual authored world transforms with the water shader before
+// static baking removes per-prop identities. Reflections therefore follow the
+// same bank, vegetation and karst positions visible above the waterline.
+for (const item of availableDressing) {
+  const assetName = `${item.id} ${item.asset}`.toLowerCase();
+  const type = assetName.includes("bamboo") || assetName.includes("reed") || assetName.includes("fern") || assetName.includes("habitat_lotus")
+    ? "vegetation"
+    : assetName.includes("karst") || assetName.includes("mountain")
+      ? "karst"
+      : assetName.includes("lantern")
+        ? "lantern"
+        : "bank";
+  const radius = type === "karst" ? 4.6 : type === "vegetation" ? 1.35 : 2.2;
+  waterSystem.registerSceneFeature({
+    position: new THREE.Vector3(...item.position),
+    radius: radius * Math.max(item.scale[0], item.scale[2]),
+    type,
+  });
+  for (const footprint of item.waterFootprints ?? []) {
+    const itemYaw = item.rotation?.[1] ?? 0;
+    const localYaw = footprint.yaw ?? 0;
+    const cos = Math.cos(itemYaw);
+    const sin = Math.sin(itemYaw);
+    const localX = footprint.center[0] * item.scale[0];
+    const localZ = footprint.center[1] * item.scale[2];
+    waterSystem.registerShorePrimitive({
+      center: new THREE.Vector3(
+        item.position[0] + localX * cos + localZ * sin,
+        0,
+        item.position[2] - localX * sin + localZ * cos,
+      ),
+      radii: new THREE.Vector2(
+        footprint.radii[0] * item.scale[0],
+        footprint.radii[1] * item.scale[2],
+      ),
+      yaw: itemYaw + localYaw,
+      role: footprint.role,
+    });
+  }
+}
 const dressingGroups = new Map();
 const dressingBakes = [];
 for (const item of availableDressing) {
@@ -346,9 +388,16 @@ let playing = false,
   pendingDoubleJump = false,
   checkpointPad = pads[0],
   cameraImpact = 0;
+const deterministicCapture = new URLSearchParams(location.search).has(
+  "deterministicCapture",
+);
+const FIXED_CAPTURE_DT_MS = 1000 / 60;
+let captureNow = 0;
+const gameNow = () =>
+  deterministicCapture ? captureNow : performance.now();
 const moveVelocity = new THREE.Vector2();
 function jump() {
-  if (playing) jumpQueuedAt = performance.now();
+  if (playing) jumpQueuedAt = gameNow();
 }
 document.getElementById("begin").onclick = () => {
   playing = true;
@@ -365,14 +414,28 @@ let prev = performance.now(),
   totalFrames = 0;
 const clock = new THREE.Clock();
 const cameraTarget = new THREE.Vector3();
+// Seed the follow camera at its authored arrival pose. Starting from Three's
+// default origin made the first several visible frames fly through the hero
+// and foreground bank while the damped follow caught up.
+const initialCameraVolume = CAMERA_VOLUMES[0];
+camera.position.set(
+  hero.position.x + initialCameraVolume.lateralBias,
+  hero.position.y + initialCameraVolume.height,
+  hero.position.z + initialCameraVolume.distance,
+);
+camera.lookAt(
+  hero.position.x + initialCameraVolume.lateralBias,
+  hero.position.y + initialCameraVolume.targetLift,
+  hero.position.z - initialCameraVolume.lookAhead,
+);
 const shrineLanding = LANDMARKS.find((item) => item.id === "shrine_landing");
 const shrineCollision = shrineLanding.collision;
 function animate(now) {
-  requestAnimationFrame(animate);
-  const real = (now - prev) / 1000;
+  if (!deterministicCapture) requestAnimationFrame(animate);
+  const real = deterministicCapture ? 1 / 60 : (now - prev) / 1000;
   prev = now;
   const dt = Math.min(real, 0.033),
-    t = clock.getElapsedTime();
+    t = deterministicCapture ? now / 1000 : clock.getElapsedTime();
   totalFrames++;
   frames++;
   if (now - fpst > 500) {
@@ -640,7 +703,20 @@ function animate(now) {
     tris: renderer.info.render.triangles,
   };
 }
-requestAnimationFrame(animate);
+if (deterministicCapture) {
+  window.__STEP__ = (count = 1) => {
+    const steps = Math.max(0, Math.min(600, Math.floor(Number(count) || 0)));
+    for (let i = 0; i < steps; i++) {
+      captureNow += FIXED_CAPTURE_DT_MS;
+      animate(captureNow);
+    }
+    return structuredClone(window.__GAME__);
+  };
+  // Establish an identical rendered frame before a controller begins input.
+  window.__STEP__(1);
+} else {
+  requestAnimationFrame(animate);
+}
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();

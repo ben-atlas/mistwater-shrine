@@ -6,6 +6,8 @@ const MAX_IMPULSES = 24;
 const IMPACT_IMPULSES = 16;
 const WAKE_IMPULSES = MAX_IMPULSES - IMPACT_IMPULSES;
 const MAX_REFLECTED_PADS = 16;
+const MAX_SCENE_FEATURES = 24;
+const MAX_SHORE_PRIMITIVES = 24;
 const DEFAULT_DROPLETS = 160;
 const DEFAULT_CROWNS = 16;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -40,7 +42,7 @@ vec2 waterSample(vec2 q) {
     vec4 shape = uImpulseShape[i];
     vec4 direction = uImpulseDirection[i];
     float age = uTime - impulse.z;
-    float alive = step(0.0, age) * step(age, 4.6) * direction.w;
+    float alive = step(0.0, age) * step(age, 5.6) * direction.w;
     vec2 delta = q - impulse.xy;
     float distanceToContact = length(delta);
     float radius = shape.x + age * shape.y;
@@ -108,6 +110,10 @@ uniform vec3 uSunColor;
 uniform float uOpacity;
 uniform vec4 uReflectedPad[16]; // x, z, radius, enabled
 uniform vec4 uHeroReflection; // x, z, yaw, enabled
+uniform vec4 uSceneFeature[24]; // x, z, radius, class: bank=1 vegetation=2 lantern=3 karst=4
+uniform vec4 uShorePrimitive[24]; // centre xz, ellipse radii
+uniform vec4 uShoreMeta[24]; // cos(yaw), sin(yaw), role wet=1 toe=2 reed=3, enabled
+uniform float uShoreDebug; // 0 beauty, 1 union, 2 wet toe, 3 submerged, 4 foam
 uniform vec4 uImpulse[MAX_IMPULSES];
 uniform vec4 uImpulseShape[MAX_IMPULSES];
 uniform vec4 uImpulseDirection[MAX_IMPULSES];
@@ -168,12 +174,74 @@ vec4 reflectedKarsts(vec3 origin, vec3 ray) {
   return vec4(vec3(.075, .145, .135), mask * .72);
 }
 
+vec4 reflectedWetland(vec3 origin, vec3 ray) {
+  // The playable corridor is enclosed by authored banks and reed/bamboo
+  // clusters. Project those scene classes through the reflected ray so their
+  // image length changes with camera and surface normal instead of behaving
+  // like a screen-space tint.
+  float depth = clamp((-ray.y) * 19.0 + 7.0, 3.0, 24.0);
+  vec2 hit = origin.xz + ray.xz * depth;
+  float leftEdge = -8.0 - sin(hit.y * .19) * 1.15 - sin(hit.y * .47) * .42;
+  float rightEdge = 8.5 + sin(hit.y * .16 + 1.7) * 1.20;
+  float leftBank = 1.0 - smoothstep(.05, 1.25, hit.x - leftEdge);
+  float rightBank = 1.0 - smoothstep(.05, 1.25, rightEdge - hit.x);
+  float bank = max(leftBank, rightBank);
+
+  // Vertical reed strokes grow only from the two bank bands. Independent
+  // frequencies stop the reflection becoming a barcode or a solid wall.
+  float edgeDistance = min(abs(hit.x - leftEdge), abs(hit.x - rightEdge));
+  float rooted = 1.0 - smoothstep(.15, 2.05, edgeDistance);
+  float reeds = pow(.5 + .5 * sin(hit.x * 5.7 + hit.y * 1.31), 7.0);
+  reeds *= .45 + .55 * pow(.5 + .5 * sin(hit.x * 2.11 - hit.y * 2.73), 3.0);
+  float normalBreak = smoothstep(.20, .79, .5 + .5 * sin(
+    hit.y * 3.7 + origin.x * 1.9 + ray.x * 27.0));
+  float reedMask = rooted * reeds * normalBreak;
+  float mask = clamp(bank * .56 + reedMask * .72, 0.0, .82);
+  vec3 mudMoss = mix(vec3(.105, .115, .072), vec3(.075, .205, .125),
+    clamp(reedMask * 1.25 + .18, 0.0, 1.0));
+  return vec4(mudMoss, mask);
+}
+
 float bankDistance(vec2 p) {
   // Broad authored shore phrases, used only for reflected/turbid edge response.
   float left = p.x + 8.2 + sin(p.y * .18) * 1.25 + sin(p.y * .47) * .45;
   float right = 8.7 - p.x + sin(p.y * .15 + 1.7) * 1.35;
   float shrine = length((p - vec2(.3, -45.0)) * vec2(.58, 1.0)) - 5.4;
   return min(min(left, right), shrine);
+}
+
+vec3 shoreField(vec2 p) {
+  float authoredDistance = 9999.0;
+  float role = 0.0;
+  float enabled = 0.0;
+  for (int i = 0; i < 24; i++) {
+    vec4 primitive = uShorePrimitive[i];
+    vec4 meta = uShoreMeta[i];
+    vec2 delta = p - primitive.xy;
+    vec2 local = vec2(
+      delta.x * meta.x + delta.y * meta.y,
+      -delta.x * meta.y + delta.y * meta.x
+    );
+    vec2 radii = max(primitive.zw, vec2(.08));
+    vec2 normalizedLocal = local / radii;
+    float angle = atan(normalizedLocal.y, normalizedLocal.x);
+    // Preserve the cheap analytic footprint while breaking its unmistakable
+    // ellipse silhouette. Phase is derived from the registered world centre so
+    // neighbouring lobes do not repeat and the contour stays camera-stable.
+    float phase = primitive.x * 1.73 + primitive.y * .91 + meta.z * 2.17;
+    float contour = 1.0
+      + sin(angle * 3.0 + phase) * .105
+      + sin(angle * 5.0 - phase * .73) * .052
+      + sin(angle * 8.0 + phase * 1.31) * .026;
+    float ellipse = (length(normalizedLocal) - contour) * min(radii.x, radii.y);
+    if (meta.w > .5 && ellipse < authoredDistance) {
+      authoredDistance = ellipse;
+      role = meta.z;
+      enabled = 1.0;
+    }
+  }
+  float fallback = bankDistance(p);
+  return vec3(enabled > .5 ? authoredDistance : fallback, role, enabled);
 }
 
 vec3 sceneCoupledReflection(vec2 surfacePoint, vec3 normal, out float coverage) {
@@ -252,6 +320,49 @@ vec3 sceneCoupledReflection(vec2 surfacePoint, vec3 normal, out float coverage) 
   return reflected;
 }
 
+vec4 reflectedSceneFeatures(vec2 surfacePoint, vec3 normal) {
+  vec3 color = vec3(0.0);
+  float coverage = 0.0;
+  for (int i = 0; i < 24; i++) {
+    vec4 feature = uSceneFeature[i];
+    float enabled = step(.5, feature.w);
+    vec2 towardCamera = normalize(cameraPosition.xz - feature.xy + vec2(.001));
+    vec2 side = vec2(-towardCamera.y, towardCamera.x);
+    // The same animated normal that lights the lake offsets every registered
+    // silhouette. This makes the image shear into water-borne fragments rather
+    // than sitting on the surface as a decal.
+    vec2 q = surfacePoint + normal.xz * vec2(4.8, 8.6);
+    vec2 d = q - feature.xy;
+    float along = dot(d, towardCamera);
+    float across = dot(d, side);
+    float radius = max(.35, feature.z);
+    float klass = feature.w;
+    float isBank = 1.0 - step(1.5, klass);
+    float isVegetation = step(1.5, klass) * (1.0 - step(2.5, klass));
+    float isLantern = step(2.5, klass) * (1.0 - step(3.5, klass));
+    float isKarst = step(3.5, klass);
+    float reach = radius * (1.25 + isVegetation * 1.35 + isKarst * 1.9);
+    float lengthMask = smoothstep(-.12 * radius, .18 * radius, along)
+      * (1.0 - smoothstep(reach * .72, reach, along));
+    float width = radius * mix(.92, .34, isVegetation + isLantern);
+    float widthMask = 1.0 - smoothstep(width * .45, width, abs(across));
+    float verticalStrands = smoothstep(.18, .82, .5 + .5 * sin(
+      across * mix(2.2, 8.7, isVegetation) + along * 2.9 + float(i) * 1.71));
+    float waveBreak = smoothstep(.15, .78, .5 + .5 * sin(
+      along * 5.1 + across * 2.4 + normal.x * 31.0 + normal.z * 23.0));
+    float mask = enabled * lengthMask * widthMask
+      * mix(.36, 1.0, waveBreak) * mix(1.0, verticalStrands, isVegetation);
+    vec3 bankColor = mix(vec3(.055, .105, .075), vec3(.11, .19, .105), verticalStrands);
+    vec3 featureColor = mix(bankColor, vec3(.045, .145, .075), isVegetation);
+    featureColor = mix(featureColor, vec3(1.0, .43, .075), isLantern);
+    featureColor = mix(featureColor, vec3(.055, .105, .105), isKarst);
+    float alpha = mask * (.42 + isVegetation * .18 + isLantern * .48 + isKarst * .16);
+    color = mix(color, featureColor, alpha);
+    coverage = max(coverage, alpha);
+  }
+  return vec4(color, coverage);
+}
+
 vec2 padWaterlineCoupling(vec2 surfacePoint) {
   float wetSkirt = 0.0;
   float stirredSilt = 0.0;
@@ -274,9 +385,11 @@ vec2 padWaterlineCoupling(vec2 surfacePoint) {
   return vec2(wetSkirt, stirredSilt);
 }
 
-vec2 fragmentContact(vec2 p) {
+vec4 fragmentContact(vec2 p) {
   float ridge = 0.0;
   float cavity = 0.0;
+  float wakeCrest = 0.0;
+  float wakeTrough = 0.0;
   for (int i = 0; i < MAX_IMPULSES; i++) {
     vec4 impulse = uImpulse[i];
     vec4 shape = uImpulseShape[i];
@@ -285,15 +398,70 @@ vec2 fragmentContact(vec2 p) {
     float alive = step(0.0, age) * step(age, 5.6) * direction.w;
     float distanceToContact = length(p - impulse.xy);
     float radius = shape.x + age * shape.y;
-    float width = .14 + age * .035;
+    // The chase camera compresses the lake into a shallow screen-space wedge.
+    // A physically tiny ridge disappeared entirely at normal framing, so the
+    // readable event uses a broad trough/crest pair while retaining a broken rim.
+    float width = .14 + age * .030;
     float ring = exp(-pow((distanceToContact - radius) / width, 2.0));
-    float memory = exp(-age * .22);
-    ridge += alive * impulse.w * ring * memory;
+    vec2 radial = p - impulse.xy;
+    float angle = atan(radial.y, radial.x);
+    // Real landing rings are interrupted by capillary chop and leaf wakes.
+    // Give each contact a stable but different broken rim instead of summing
+    // perfect neon circles into a moire target.
+    float broken = smoothstep(.12, .82, .5 + .5 * sin(
+      angle * (7.0 + mod(float(i), 5.0))
+      + distanceToContact * 1.65 + impulse.x * .71 + impulse.y * .37));
+    broken = mix(.26, 1.0, broken);
+    float memory = exp(-age * .62);
+    ridge += alive * impulse.w * ring * memory * broken;
     cavity += alive * impulse.w
       * exp(-distanceToContact * distanceToContact / (.18 + age * 1.15))
       * exp(-age * .72);
+
+    // Preserve heading at fragment resolution. The displaced mesh alone cannot
+    // carry a narrow V through the chase camera's foreshortening, so two broad,
+    // broken pressure arms get their own dark/bright pair. They widen from the
+    // recorded contact and decay more slowly than the crown, making direction
+    // and prior-origin memory readable without becoming a painted arrow.
+    vec2 dir = normalize(direction.xy + vec2(.0001));
+    float forward = dot(radial, dir);
+    float side = abs(radial.x * dir.y - radial.y * dir.x);
+    float wakeLength = 1.85 + age * .16;
+    float arm = abs(side - max(forward, 0.0) * .38);
+    float armWidth = .12 + age * .025;
+    float envelope = smoothstep(-.18, .10, forward)
+      * (1.0 - smoothstep(wakeLength * .72, wakeLength, forward));
+    float vWake = exp(-arm * arm / max(.008, armWidth * armWidth)) * envelope;
+    float brokenWake = mix(.38, 1.0, smoothstep(.18, .82,
+      .5 + .5 * sin(forward * 5.3 + side * 8.1 + impulse.x * 1.7)));
+    float wakeMemory = exp(-age * .68) * direction.z;
+    wakeCrest += alive * impulse.w * vWake * brokenWake * wakeMemory;
+    float troughArm = abs(side - max(forward, 0.0) * .38 - .16);
+    wakeTrough += alive * impulse.w
+      * exp(-troughArm * troughArm / max(.012, armWidth * armWidth * 1.8))
+      * envelope * wakeMemory;
   }
-  return vec2(ridge, cavity);
+  return vec4(ridge, cavity, wakeCrest, wakeTrough);
+}
+
+vec2 interactionReflectionWarp(vec2 p) {
+  vec2 warp = vec2(0.0);
+  for (int i = 0; i < MAX_IMPULSES; i++) {
+    vec4 impulse = uImpulse[i];
+    vec4 direction = uImpulseDirection[i];
+    float age = uTime - impulse.z;
+    float alive = step(0.0, age) * step(age, 3.6) * direction.w;
+    vec2 delta = p - impulse.xy;
+    float local = exp(-dot(delta, delta) / (1.05 + age * 1.35));
+    vec2 radial = normalize(delta + vec2(.001));
+    vec2 travel = normalize(direction.xy + vec2(.001));
+    // Radial displacement parts the reflected actor/pad silhouette around the
+    // crown; heading adds a smaller downstream shear that visibly ties it to
+    // the V wake rather than merely tinting the water beneath it.
+    warp += alive * impulse.w * local * exp(-age * .48)
+      * (radial * .72 + travel * direction.z * .46);
+  }
+  return clamp(warp, vec2(-1.15), vec2(1.15));
 }
 
 void main() {
@@ -317,11 +485,19 @@ void main() {
   vec3 reflectedSky = mix(uHorizonColor, uZenithColor, skyMix);
   vec4 karstReflection = reflectedKarsts(vWorldPosition, reflectedRay);
   vec4 gateReflection = reflectedArchitecture(vWorldPosition, reflectedRay);
-  reflectedSky = mix(reflectedSky, karstReflection.rgb, karstReflection.a);
-  reflectedSky = mix(reflectedSky, gateReflection.rgb, gateReflection.a);
+  vec4 wetlandReflection = reflectedWetland(vWorldPosition, reflectedRay);
+  vec4 featureReflection = reflectedSceneFeatures(vWorldPosition.xz, N);
+  reflectedSky = mix(reflectedSky, karstReflection.rgb, karstReflection.a * 1.16);
+  reflectedSky = mix(reflectedSky, wetlandReflection.rgb,
+    wetlandReflection.a * (.76 + fresnel * .38));
+  reflectedSky = mix(reflectedSky, gateReflection.rgb, gateReflection.a * 1.12);
+  reflectedSky = mix(reflectedSky, featureReflection.rgb,
+    min(1.0, featureReflection.a * (1.05 + fresnel * .25)));
   float objectCoverage;
-  vec3 objectReflection = sceneCoupledReflection(vWorldPosition.xz, N, objectCoverage);
-  reflectedSky = mix(reflectedSky, objectReflection, objectCoverage);
+  vec2 reflectionWarp = interactionReflectionWarp(vWorldPosition.xz);
+  vec3 objectReflection = sceneCoupledReflection(
+    vWorldPosition.xz + reflectionWarp, N, objectCoverage);
+  reflectedSky = mix(reflectedSky, objectReflection, min(1.0, objectCoverage * 1.28));
   vec2 padCoupling = padWaterlineCoupling(vWorldPosition.xz);
 
   // The physically intersected gate resolves near the horizon. A restrained,
@@ -349,10 +525,39 @@ void main() {
   // Depth proxy keeps broad tonal variation without pretending to know scene depth.
   float depthNoise = .5 + .5 * sin(vWorldPosition.x * .071 + vWorldPosition.z * .113
     + sin(vWorldPosition.x * .19 - uTime * .17));
-  float shore = bankDistance(vWorldPosition.xz);
-  float shallows = 1.0 - smoothstep(-.4, 2.5, shore);
+  vec3 shoreData = shoreField(vWorldPosition.xz);
+  float shore = shoreData.x;
+  float fallbackShallows = 1.0 - smoothstep(-.4, 2.5, shore);
+  float authoredShallows = 1.0 - smoothstep(.08, 1.18, abs(shore));
+  float shallows = mix(fallbackShallows, authoredShallows, shoreData.z);
   vec3 body = mix(uDeepColor, uShallowColor,
     .19 + depthNoise * .12 + shallows * .31);
+  // A submerged continuation of the banks: normal-offset silt/stone mottling
+  // shows through at steep view angles and vanishes into deeper route water.
+  vec2 refractedPoint = vWorldPosition.xz - N.xz * (1.15 + (1.0 - NdotV) * 1.7);
+  float submergedNoise = .5 + .5 * sin(refractedPoint.x * 1.47
+    + sin(refractedPoint.y * .83) * 1.3);
+  submergedNoise *= .58 + .42 * (.5 + .5 * sin(
+    refractedPoint.y * 2.31 - refractedPoint.x * .63));
+  vec3 submerged = mix(vec3(.115, .135, .082), vec3(.26, .285, .155),
+    submergedNoise);
+  body = mix(body, submerged, shallows * (.16 + NdotV * .18));
+  // Placement-driven bank anatomy. The edge is deliberately broken so this
+  // reads as wet silt, submerged roots and trapped flecks rather than a white
+  // outline. All sampling is in world space, so it cannot swim with camera.
+  float wetToe = shoreData.z * (1.0 - smoothstep(-.28, .32, abs(shore)));
+  float outerToe = shoreData.z * smoothstep(-.08, .18, shore)
+    * (1.0 - smoothstep(.18, 1.15, shore));
+  float shoreBreak = .5 + .5 * sin(vWorldPosition.x * 3.71
+    + vWorldPosition.z * 2.17 + sin(vWorldPosition.z * 1.31) * 2.2);
+  shoreBreak *= .55 + .45 * (.5 + .5 * sin(
+    vWorldPosition.x * 7.13 - vWorldPosition.z * 4.27 + uTime * .24));
+  float reedBias = step(2.5, shoreData.y);
+  body = mix(body, vec3(.075, .105, .064), wetToe * (.24 - reedBias * .07));
+  body = mix(body, vec3(.17, .205, .105), outerToe * (.08 + NdotV * .10));
+  float foamFleck = outerToe * smoothstep(.76, .93, shoreBreak)
+    * smoothstep(.18, .7, abs(N.x) + abs(N.z));
+  body += vec3(.44, .52, .35) * foamFleck * .055;
   float broadBand = .5 + .5 * sin(
     dot(vWorldPosition.xz, vec2(.31, -.17)) + uTime * .38
     + sin(dot(vWorldPosition.xz, vec2(-.11, .27)) - uTime * .24) * .72
@@ -374,19 +579,53 @@ void main() {
   // Interaction is vertex-evaluated, so a narrow/high-contrast threshold exposes
   // the water grid again. Keep shader foam broad and subtle; pooled crowns and
   // droplets carry the crisp contact read without turning a triangle white.
-  vec2 fragmentHistory = fragmentContact(vWorldPosition.xz);
-  float contact = smoothstep(.055, .48, fragmentHistory.x);
-  float cavity = smoothstep(.08, .58, fragmentHistory.y);
+  vec4 fragmentHistory = fragmentContact(vWorldPosition.xz);
+  float contact = smoothstep(.035, .34, fragmentHistory.x);
+  float cavity = smoothstep(.045, .46, fragmentHistory.y);
   // Alternating luminance is essential: rings survive grayscale while remaining
   // green-water phenomena, not white decals.
   color *= 1.0 - cavity * .30;
   // A dark outer trough plus restrained pale crest survives downsampling and
   // grayscale without reading as a pasted white decal.
-  float trough = smoothstep(.025, .22, fragmentHistory.x)
-    * (1.0 - smoothstep(.34, .82, fragmentHistory.x));
-  color *= 1.0 - trough * .18;
-  color = mix(color, vec3(.38, .72, .64), contact * .46);
-  color += vec3(.16, .29, .25) * contact * .16;
+  float trough = smoothstep(.018, .16, fragmentHistory.x)
+    * (1.0 - smoothstep(.38, .88, fragmentHistory.x));
+  color *= 1.0 - trough * .34;
+  // Let the ring alter the reflected image as well as its colour: a dark
+  // underside, bright broken crest and offset secondary lip form a small
+  // displaced-water event that remains legible after 25% grayscale reduction.
+  float crestBreak = .66 + .34 * smoothstep(.18, .82, .5 + .5 * sin(
+    atan(vWorldPosition.z, vWorldPosition.x) * 11.0
+    + vWorldPosition.x * 1.7 - vWorldPosition.z * 1.1));
+  float crest = contact * crestBreak;
+  color *= 1.0 - cavity * .08 - trough * .10;
+  color = mix(color, vec3(.46, .69, .62), crest * .43);
+  color += vec3(.16, .27, .23) * crest * .12;
+  float wakeDark = smoothstep(.025, .34, fragmentHistory.w);
+  float wakeBright = smoothstep(.035, .38, fragmentHistory.z);
+  color *= 1.0 - wakeDark * .26;
+  color = mix(color, vec3(.39, .63, .57), wakeBright * .36);
+  // Deterministic audit planes. Capture scripts can pause the simulation once,
+  // switch this uniform, and take all four masks from the identical camera/tick.
+  // Black is absence; saturated colours are deliberately independent of scene
+  // lighting, fog and grading so exact pixel measurements remain possible.
+  if (uShoreDebug > .5) {
+    float unionMask = shoreData.z * (1.0 - smoothstep(1.18, 1.36, abs(shore)));
+    float debugMask = unionMask;
+    vec3 debugColor = vec3(1.0);
+    if (uShoreDebug > 1.5 && uShoreDebug < 2.5) {
+      debugMask = wetToe;
+      debugColor = vec3(0.0, 1.0, 1.0);
+    } else if (uShoreDebug > 2.5 && uShoreDebug < 3.5) {
+      debugMask = shoreData.z * (1.0 - smoothstep(.02, .18, shore))
+        * (1.0 - smoothstep(.02, 1.18, -shore));
+      debugColor = vec3(.15, .55, 1.0);
+    } else if (uShoreDebug > 3.5) {
+      debugMask = foamFleck;
+      debugColor = vec3(1.0, .15, .05);
+    }
+    gl_FragColor = vec4(debugColor * step(.035, debugMask), 1.0);
+    return;
+  }
   gl_FragColor = vec4(color, uOpacity);
   #include <fog_fragment>
 }
@@ -401,9 +640,9 @@ function tierFromImpact(impactSpeed = 0, horizontalSpeed = 0) {
 
 function tierSettings(tier) {
   if (tier === "hard")
-    return { amplitude: 1, rings: 1, droplets: 34, crown: 1, pad: 1 };
+    return { amplitude: 1, rings: 3, droplets: 34, crown: 1, pad: 1 };
   if (tier === "normal")
-    return { amplitude: 0.68, rings: 2, droplets: 17, crown: 0.7, pad: 0.58 };
+    return { amplitude: 0.72, rings: 3, droplets: 17, crown: 0.78, pad: 0.58 };
   return { amplitude: 0.34, rings: 1, droplets: 4, crown: 0.3, pad: 0.24 };
 }
 
@@ -437,6 +676,18 @@ export function createWaterSystem({
     () => new THREE.Vector4(9999, 9999, 1, 0),
   );
   const heroReflection = new THREE.Vector4(9999, 9999, 0, 0);
+  const sceneFeature = Array.from(
+    { length: MAX_SCENE_FEATURES },
+    () => new THREE.Vector4(9999, 9999, 1, 0),
+  );
+  const shorePrimitive = Array.from(
+    { length: MAX_SHORE_PRIMITIVES },
+    () => new THREE.Vector4(9999, 9999, 1, 1),
+  );
+  const shoreMeta = Array.from(
+    { length: MAX_SHORE_PRIMITIVES },
+    () => new THREE.Vector4(1, 0, 0, 0),
+  );
   const uniforms = {
     uTime: { value: 0 },
     uImpulse: { value: impulse },
@@ -444,6 +695,10 @@ export function createWaterSystem({
     uImpulseDirection: { value: impulseDirection },
     uReflectedPad: { value: reflectedPad },
     uHeroReflection: { value: heroReflection },
+    uSceneFeature: { value: sceneFeature },
+    uShorePrimitive: { value: shorePrimitive },
+    uShoreMeta: { value: shoreMeta },
+    uShoreDebug: { value: 0 },
     uDeepColor: { value: new THREE.Color(colors.deep ?? 0x102f33) },
     uShallowColor: { value: new THREE.Color(colors.shallow ?? 0x285f61) },
     uHorizonColor: { value: new THREE.Color(colors.horizon ?? 0x78958b) },
@@ -500,16 +755,40 @@ export function createWaterSystem({
 
   // Crowns use a shared open cone wall; scaling produces a brief radial sheet.
   const crownGeometry = new THREE.CylinderGeometry(
-    0.58,
-    0.18,
+    0.46,
+    0.22,
     0.24,
-    24,
+    20,
     1,
     true,
   );
   crownGeometry.translate(0, 0.12, 0);
+  // Break the lathed silhouette into an authored impact rim. The alternating
+  // lip heights catch light as distinct splash tongues while retaining one
+  // pooled instanced draw and the same collision-free footprint.
+  const crownPositions = crownGeometry.attributes.position;
+  for (let i = 0; i < crownPositions.count; i++) {
+    const px = crownPositions.getX(i);
+    const py = crownPositions.getY(i);
+    const pz = crownPositions.getZ(i);
+    if (py < 0.18) continue;
+    const angle = Math.atan2(pz, px);
+    // Keep the plan-view rim mostly circular and put the irregularity into
+    // vertical tongues. The former .76–1.0 radial modulation projected as a
+    // bright twelve-point star whenever the chase camera looked down.
+    const tongue = 0.5 + 0.5 * Math.cos(angle * 10 + 0.35);
+    const radial = 0.92 + 0.08 * tongue;
+    crownPositions.setXYZ(
+      i,
+      px * radial,
+      py + 0.11 * tongue * tongue,
+      pz * radial,
+    );
+  }
+  crownPositions.needsUpdate = true;
+  crownGeometry.computeVertexNormals();
   const crownMaterial = new THREE.MeshStandardMaterial({
-    color: 0x5e9f94,
+    color: 0x477b74,
     emissive: 0x061511,
     roughness: 0.3,
     metalness: 0.0,
@@ -558,6 +837,8 @@ export function createWaterSystem({
   let crownCursor = 0;
   let time = 0;
   let seed = 0x7f4a7c15;
+  let sceneFeatureCount = 0;
+  let shorePrimitiveCount = 0;
 
   // Deterministic and allocation-free; art remains stable across captures.
   function random() {
@@ -620,7 +901,7 @@ export function createWaterSystem({
     const i = crownCursor;
     crownPosition[i].set(position.x, y + 0.012, position.z);
     crownLife[i] = 0.0001;
-    crownLifetime[i] = 0.32 + strength * 0.22;
+    crownLifetime[i] = 1.05 + strength * 0.48;
     crownStrength[i] = strength;
     crownCursor = (i + 1) % maxCrowns;
   }
@@ -640,20 +921,28 @@ export function createWaterSystem({
     direction.normalize();
 
     for (let ring = 0; ring < settings.rings; ring++) {
+      // A landing is not a single mathematical point. Retain a compact history
+      // of the leading foot, displaced leaf bowl and trailing foot. Their
+      // staggered world-space origins keep two older events visible after the
+      // active crown without growing one implausibly large emissive circle.
+      const sideX = -direction.y;
+      const sideZ = direction.x;
+      const along = ring === 0 ? 0 : ring === 1 ? -0.34 : -0.62;
+      const across = ring === 0 ? 0 : ring === 1 ? 0.19 : -0.16;
       writeImpulse(
-        position.x,
-        position.z,
-        settings.amplitude * (1 - ring * 0.16),
-        0.1 + ring * 0.13,
-        0.8 + ring * 0.21,
-        9.5 + ring * 1.2,
-        0.82 + ring * 0.18,
+        position.x + direction.x * along + sideX * across,
+        position.z + direction.y * along + sideZ * across,
+        settings.amplitude * (1 - ring * 0.34),
+        0.09 + ring * 0.045,
+        0.48 + ring * 0.055,
+        10.2 + ring * 1.35,
+        1.08 + ring * 0.16,
         direction.x,
         direction.y,
         horizontalSpeed > 1.1 && ring === 0
           ? Math.min(1, horizontalSpeed / 6)
           : 0,
-        ring === 0 ? 0 : ring === 1 ? 0.16 : 0.34,
+        ring === 0 ? 0 : ring === 1 ? 0.11 : 0.24,
       );
     }
     emitDroplets(
@@ -822,9 +1111,9 @@ export function createWaterSystem({
         const phase = Math.min(1, nextLife / crownLifetime[i]);
         const fade = 1 - phase;
         scale.set(
-          0.55 + phase * 1.55,
-          fade * crownStrength[i],
-          0.55 + phase * 1.55,
+          0.58 + phase * 1.82,
+          Math.pow(fade, 0.72) * crownStrength[i] * 1.12,
+          0.58 + phase * 1.82,
         );
       }
       particleQuaternion.identity();
@@ -840,6 +1129,29 @@ export function createWaterSystem({
       return;
     }
     heroReflection.set(position.x, position.z, yaw, enabled ? 1 : 0);
+  }
+
+  function registerSceneFeature({ position, radius = 1, type = "bank" } = {}) {
+    if (!position || sceneFeatureCount >= MAX_SCENE_FEATURES) return false;
+    const classes = { bank: 1, vegetation: 2, lantern: 3, karst: 4 };
+    const klass = classes[type] ?? classes.bank;
+    sceneFeature[sceneFeatureCount].set(position.x, position.z, radius, klass);
+    sceneFeatureCount += 1;
+    return true;
+  }
+
+  function registerShorePrimitive({ center, radii, yaw = 0, role = "toe" } = {}) {
+    if (!center || !radii || shorePrimitiveCount >= MAX_SHORE_PRIMITIVES) return false;
+    const roles = { wet: 1, toe: 2, reed: 3 };
+    shorePrimitive[shorePrimitiveCount].set(center.x, center.z, radii.x, radii.y);
+    shoreMeta[shorePrimitiveCount].set(Math.cos(yaw), Math.sin(yaw), roles[role] ?? 2, 1);
+    shorePrimitiveCount += 1;
+    return true;
+  }
+
+  function setShoreDebug(mode = 0) {
+    const modes = { beauty: 0, union: 1, wet: 2, submerged: 3, foam: 4 };
+    uniforms.uShoreDebug.value = typeof mode === "string" ? (modes[mode] ?? 0) : mode;
   }
 
 
@@ -863,6 +1175,9 @@ export function createWaterSystem({
     registerPad,
     impulsePad,
     setHeroReflection,
+    registerSceneFeature,
+    registerShorePrimitive,
+    setShoreDebug,
     classifyTier: tierFromImpact,
     dispose,
     stats: { maxImpulses: MAX_IMPULSES, maxDroplets, maxCrowns, drawCalls: 3 },
