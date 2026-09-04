@@ -521,7 +521,7 @@ void main() {
   float moonDisc = smoothstep(.9987, .99965, dot(reflectedRay, moonDirection));
   float warmPath = pow(max(dot(reflectedRay.xz, moonDirection.xz), 0.0), 44.0)
     * smoothstep(-.06, .42, reflectedRay.y);
-  reflectedSky += uSunColor * (moonDisc * 1.15 + warmPath * .075);
+  reflectedSky += uSunColor * (moonDisc * 1.28 + warmPath * .12);
 
   // Depth proxy keeps broad tonal variation without pretending to know scene depth.
   float depthNoise = .5 + .5 * sin(vWorldPosition.x * .071 + vWorldPosition.z * .113
@@ -573,7 +573,7 @@ void main() {
   color *= 1.0 - padCoupling.x * .38;
   color = mix(color, vec3(.22, .30, .20), padCoupling.y * .24);
   color += uShallowColor * padCoupling.y * .055;
-  color += uSunColor * (broadSpecular * .13 + glint * .34);
+  color += uSunColor * (broadSpecular * .21 + glint * .52);
   color += uShallowColor * shallows * .08;
   color += uHorizonColor * smoothstep(.16, .92, vInteraction) * .11;
 

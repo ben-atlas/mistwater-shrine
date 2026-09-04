@@ -19,8 +19,8 @@ import {
 setSurfaceDefaults({ on: true, size: 512, normalScale: 0.72 });
 const mobileMode = matchMedia("(pointer: coarse)").matches;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xaebfb4);
-scene.fog = new THREE.FogExp2(0x98afa3, 0.023);
+scene.background = new THREE.Color(0x91aaa2);
+scene.fog = new THREE.FogExp2(0x86a9a3, 0.025);
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(175, 32, 18),
   new THREE.ShaderMaterial({
@@ -73,16 +73,16 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 1.6));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.02;
+renderer.toneMappingExposure = 1.08;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.045).texture;
 scene.environmentIntensity = 0.34;
 pmrem.dispose();
 document.body.prepend(renderer.domElement);
-scene.add(new THREE.HemisphereLight(0xdce8dd, 0x1d302c, 1.15));
-const sun = new THREE.DirectionalLight(0xffdda3, 3.1);
-sun.position.set(-16, 26, -10);
+scene.add(new THREE.HemisphereLight(0xcfe5e2, 0x142926, 0.92));
+const sun = new THREE.DirectionalLight(0xffd39a, 3.65);
+sun.position.set(-19, 28, -7);
 sun.target.position.set(0, 0, -23);
 scene.add(sun.target);
 sun.castShadow = true;
@@ -96,9 +96,47 @@ sun.shadow.camera.far = 82;
 sun.shadow.bias = -0.00025;
 sun.shadow.normalBias = 0.035;
 scene.add(sun);
-const coolFill = new THREE.DirectionalLight(0x8fb8ad, 0.45);
+const coolFill = new THREE.DirectionalLight(0x75b8b3, 0.62);
 coolFill.position.set(12, 8, 10);
 scene.add(coolFill);
+
+// Checkpoint 3: shallow mist banks make the atmosphere spatial instead of
+// applying one uniform veil to the whole route. The soft procedural texture is
+// shared by every sprite and costs no external asset request.
+const mistCanvas = document.createElement("canvas");
+mistCanvas.width = mistCanvas.height = 128;
+const mistContext = mistCanvas.getContext("2d");
+const mistGradient = mistContext.createRadialGradient(64, 64, 5, 64, 64, 62);
+mistGradient.addColorStop(0, "rgba(210,238,233,.72)");
+mistGradient.addColorStop(.42, "rgba(181,219,214,.34)");
+mistGradient.addColorStop(1, "rgba(145,191,187,0)");
+mistContext.fillStyle = mistGradient;
+mistContext.fillRect(0, 0, 128, 128);
+const mistTexture = new THREE.CanvasTexture(mistCanvas);
+const mistBanks = [];
+for (const [x, y, z, sx, sy, phase] of [
+  [-7,.72,-7,11,2.3,.2], [7,.5,-12,10,1.8,1.8], [-6,.62,-20,9,2.1,3.1],
+  [6,.8,-28,12,2.5,4.2], [-8,.7,-35,13,2.2,5.4], [7,.9,-41,12,2.8,2.6],
+  [-5,1.15,-49,15,3.2,.9], [6,1.5,-56,18,3.6,3.8],
+]) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: mistTexture, color: 0xc5e4df, transparent: true, opacity: .3,
+    depthWrite: false, fog: true,
+  }));
+  sprite.position.set(x, y, z); sprite.scale.set(sx, sy, 1);
+  sprite.userData.baseX = x; sprite.userData.baseY = y; sprite.userData.phase = phase;
+  scene.add(sprite); mistBanks.push(sprite);
+}
+
+const contactMaterial = new THREE.MeshBasicMaterial({
+  color: 0x071a18, transparent: true, opacity: .34, depthWrite: false,
+  blending: THREE.MultiplyBlending,
+});
+function createContactShadow(radius = .62) {
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(radius, 24), contactMaterial.clone());
+  shadow.rotation.x = -Math.PI * .5; shadow.renderOrder = 3; scene.add(shadow);
+  return shadow;
+}
 const waterSystem = createWaterSystem({
   scene,
   width: 70,
@@ -289,12 +327,33 @@ for (const item of LANDMARKS) {
   }
 }
 
+// Warm pools anchor each practical in the cool mist, including the tunnel
+// lantern which lives in the baked dressing set rather than LANDMARKS.
+const lanternPools = [];
+const poolGeometry = new THREE.CircleGeometry(1, 40);
+for (const [x, z, radius, intensity] of [
+  [6.2, -24.1, 3.1, 5.8], [-3.55, -43.65, 3.7, 8.2], [4.3, -45.55, 3.25, 7.0],
+]) {
+  const pool = new THREE.Mesh(poolGeometry, new THREE.MeshBasicMaterial({
+    color: 0xffae4b, transparent: true, opacity: .115, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  pool.rotation.x = -Math.PI * .5; pool.position.set(x, .028, z);
+  pool.scale.set(radius, radius * .72, 1); pool.renderOrder = 2;
+  scene.add(pool); lanternPools.push(pool);
+  if (z > -30) {
+    const tunnelLight = new THREE.PointLight(0xffb55d, intensity, radius * 2.15, 2);
+    tunnelLight.position.set(x, 1.7, z); scene.add(tunnelLight);
+  }
+}
+
 const hero = await ASSET("./assets/forest_guardian.js", {
   height: 1.25,
   keepHierarchy: true,
 });
 scene.add(hero);
 hero.position.set(TRAVERSAL[0].x, pads[0].top, TRAVERSAL[0].z);
+const heroContactShadow = createContactShadow(.58);
 const joints = hero.userData.joints || {};
 const guardianAnimation = createGuardianAnimation(joints);
 
@@ -315,7 +374,8 @@ function createCrocodile(role, x, z) {
   const roleMark = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.045, 6, 18), new THREE.MeshBasicMaterial({ color: role === "ranged" ? 0xffa13d : 0xef4e42 }));
   roleMark.rotation.x = Math.PI * 0.5; roleMark.position.y = 0.72;
   root.add(body, head, tail, roleMark); root.position.set(x, 0.22, z); scene.add(root);
-  const enemy = { role, root, hp: role === "ranged" ? 2 : 3, maxHp: role === "ranged" ? 2 : 3, cooldown: role === "ranged" ? 1.4 : 0.55, windup: 0, stagger: 0, flash: 0, alive: true, roleMark };
+  const contactShadow = createContactShadow(.72);
+  const enemy = { role, root, contactShadow, hp: role === "ranged" ? 2 : 3, maxHp: role === "ranged" ? 2 : 3, cooldown: role === "ranged" ? 1.4 : 0.55, windup: 0, stagger: 0, flash: 0, alive: true, roleMark };
   enemies.push(enemy); return enemy;
 }
 createCrocodile("melee", 0.55, -16.9);
@@ -766,6 +826,23 @@ function animate(now) {
       }
     }
   }
+  const heroShadowHeight = Math.max(0, hero.position.y - .08);
+  heroContactShadow.position.set(hero.position.x, .042, hero.position.z);
+  heroContactShadow.scale.setScalar(THREE.MathUtils.clamp(1.18 - heroShadowHeight * .13, .48, 1));
+  heroContactShadow.material.opacity = THREE.MathUtils.clamp(.38 - heroShadowHeight * .055, .08, .34);
+  for (const enemy of enemies) {
+    enemy.contactShadow.visible = enemy.alive;
+    enemy.contactShadow.position.set(enemy.root.position.x, .044, enemy.root.position.z);
+  }
+  for (const mist of mistBanks) {
+    const phase = mist.userData.phase;
+    mist.position.x = mist.userData.baseX + Math.sin(t * .115 + phase) * 1.35;
+    mist.position.y = mist.userData.baseY + Math.sin(t * .23 + phase) * .1;
+    mist.material.opacity = .22 + (Math.sin(t * .31 + phase) * .5 + .5) * .14;
+  }
+  for (let i = 0; i < lanternPools.length; i++) {
+    lanternPools[i].material.opacity = .095 + Math.sin(t * 2.2 + i * 1.7) * .018;
+  }
   waterSystem.setHeroReflection(hero.position, hero.rotation.y, hero.visible);
   waterSystem.update(dt, t);
   const shrineRevealed = hero.position.z < -15;
@@ -873,6 +950,7 @@ function animate(now) {
     resets: resetCount,
     health: playerHealth,
     combat: { enemiesAlive: enemies.length - enemiesDefeated, enemiesDefeated, bombs: bombs.length, attacking: attackActive > 0, dodging: dodgeTime > 0, guarding: Boolean(keys.KeyK && dodgeTime <= 0), hits: playerHits },
+    atmosphere: { mistBanks: mistBanks.length, lanternPools: lanternPools.length, sunIntensity: sun.intensity, fogDensity: scene.fog.density, contactShadows: 1 + enemies.filter((enemy) => enemy.alive).length },
     over: false,
     won,
     draws: renderer.info.render.calls,
