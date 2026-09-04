@@ -10,6 +10,7 @@ const MAX_SCENE_FEATURES = 24;
 const MAX_SHORE_PRIMITIVES = 24;
 const DEFAULT_DROPLETS = 160;
 const DEFAULT_CROWNS = 16;
+const DEFAULT_VISIBLE_RINGS = 48;
 const UP = new THREE.Vector3(0, 1, 0);
 
 const VERTEX_SHADER = /* glsl */ `
@@ -655,6 +656,7 @@ export function createWaterSystem({
   y = 0,
   maxDroplets = DEFAULT_DROPLETS,
   maxCrowns = DEFAULT_CROWNS,
+  maxVisibleRings = DEFAULT_VISIBLE_RINGS,
   colors = {},
 } = {}) {
   if (!scene) throw new Error("createWaterSystem requires a THREE.Scene");
@@ -808,6 +810,31 @@ export function createWaterSystem({
   crowns.name = "PooledSplashCrowns";
   scene.add(crowns);
 
+  // A pooled, grazing-angle ring layer carries impact history at ordinary
+  // chase-camera scale. Shader displacement remains the physical response;
+  // these thin broken rims supply the missing value contrast in grayscale.
+  const ringGeometry = new THREE.TorusGeometry(1, 0.010, 4, 40);
+  ringGeometry.rotateX(Math.PI / 2);
+  const ringMaterial = new THREE.MeshStandardMaterial({
+    color: 0x628f86,
+    emissive: 0x061411,
+    emissiveIntensity: 0.18,
+    roughness: 0.48,
+    transparent: true,
+    opacity: 0.34,
+    depthWrite: false,
+    fog: true,
+  });
+  const visibleRings = new THREE.InstancedMesh(
+    ringGeometry,
+    ringMaterial,
+    maxVisibleRings,
+  );
+  visibleRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  visibleRings.frustumCulled = false;
+  visibleRings.name = "PooledLandingMemoryRings";
+  scene.add(visibleRings);
+
   const dropletPosition = Array.from(
     { length: maxDroplets },
     () => new THREE.Vector3(),
@@ -825,6 +852,14 @@ export function createWaterSystem({
   const crownLife = new Float32Array(maxCrowns);
   const crownLifetime = new Float32Array(maxCrowns);
   const crownStrength = new Float32Array(maxCrowns);
+  const visibleRingPosition = Array.from(
+    { length: maxVisibleRings },
+    () => new THREE.Vector3(),
+  );
+  const visibleRingLife = new Float32Array(maxVisibleRings);
+  const visibleRingLifetime = new Float32Array(maxVisibleRings);
+  const visibleRingStrength = new Float32Array(maxVisibleRings);
+  const visibleRingDelay = new Float32Array(maxVisibleRings);
   const pads = [];
   const matrix = new THREE.Matrix4();
   const scale = new THREE.Vector3();
@@ -835,6 +870,7 @@ export function createWaterSystem({
   let wakeCursor = 0;
   let dropletCursor = 0;
   let crownCursor = 0;
+  let visibleRingCursor = 0;
   let time = 0;
   let seed = 0x7f4a7c15;
   let sceneFeatureCount = 0;
@@ -906,6 +942,24 @@ export function createWaterSystem({
     crownCursor = (i + 1) % maxCrowns;
   }
 
+  function emitVisibleRings(position, strength, count) {
+    for (let n = 0; n < count; n++) {
+      const i = visibleRingCursor;
+      const angle = n * 2.17 + random() * 0.32;
+      const offset = n === 0 ? 0 : 0.16 + n * 0.09;
+      visibleRingPosition[i].set(
+        position.x + Math.cos(angle) * offset,
+        y + 0.035 + n * 0.002,
+        position.z + Math.sin(angle) * offset,
+      );
+      visibleRingLife[i] = 0.0001;
+      visibleRingDelay[i] = n * 0.16;
+      visibleRingLifetime[i] = 3.05 + n * 0.42;
+      visibleRingStrength[i] = strength * (1 - n * 0.16);
+      visibleRingCursor = (i + 1) % maxVisibleRings;
+    }
+  }
+
   function emitImpulse({
     position,
     impactSpeed = 0,
@@ -953,6 +1007,7 @@ export function createWaterSystem({
       direction.y,
     );
     if (settings.crown >= 0.5) emitCrown(position, settings.crown);
+    emitVisibleRings(position, settings.amplitude, settings.rings);
     return resolvedTier;
   }
 
@@ -1121,6 +1176,30 @@ export function createWaterSystem({
       crowns.setMatrixAt(i, matrix);
     }
     crowns.instanceMatrix.needsUpdate = true;
+
+    for (let i = 0; i < maxVisibleRings; i++) {
+      const life = visibleRingLife[i];
+      scale.setScalar(0);
+      if (life > 0) {
+        const nextLife = life + dt;
+        visibleRingLife[i] = nextLife >= visibleRingLifetime[i] ? 0 : nextLife;
+        const age = Math.max(0, nextLife - visibleRingDelay[i]);
+        if (nextLife >= visibleRingDelay[i]) {
+          const phase = Math.min(1, age / Math.max(0.1,
+            visibleRingLifetime[i] - visibleRingDelay[i]));
+          const radius = 0.16 + age * (0.38 + i % 3 * 0.035);
+          const fade = Math.pow(1 - phase, 0.58) * visibleRingStrength[i];
+          // Slightly elliptical, independently rotated rings avoid a graphic
+          // target symbol while remaining readable after 25% downsampling.
+          scale.set(radius, Math.max(0.28, fade * 0.72),
+            radius * (0.88 + (i % 5) * 0.025));
+        }
+      }
+      particleQuaternion.setFromAxisAngle(UP, (i * 2.399963) % Math.PI);
+      matrix.compose(visibleRingPosition[i], particleQuaternion, scale);
+      visibleRings.setMatrixAt(i, matrix);
+    }
+    visibleRings.instanceMatrix.needsUpdate = true;
   }
 
   function setHeroReflection(position, yaw = 0, enabled = true) {
@@ -1156,13 +1235,15 @@ export function createWaterSystem({
 
 
   function dispose() {
-    scene.remove(mesh, droplets, crowns);
+    scene.remove(mesh, droplets, crowns, visibleRings);
     mesh.geometry.dispose();
     material.dispose();
     dropletGeometry.dispose();
     dropletMaterial.dispose();
     crownGeometry.dispose();
     crownMaterial.dispose();
+    ringGeometry.dispose();
+    ringMaterial.dispose();
   }
 
   return {

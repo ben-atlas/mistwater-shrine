@@ -311,12 +311,13 @@ export const DRESSING = Object.freeze([
   // asymmetric occlusion hand-offs.  The source lotus is already a verified
   // 404 winner, so this is composition work rather than a proxy asset.
   ...[
+    // Arrival habitat is deliberately clustered rather than evenly spaced:
+    // overlapping near/mid/far leaves make the water read as a lived-in
+    // flooded shelf while keeping the authored traversal leaves unmistakable.
+    ["arrival", -6.55, -0.10,  2.55, 0.42, 4.10],
+    ["arrival",  5.75, -0.12,  1.65, 0.33, 0.55],
     ["arrival", -5.55, -0.08, 1.25, 0.52, 0.18],
-    ["arrival",  4.65, -0.10, 0.10, 0.38, 2.74],
-    ["arrival", -6.25, -0.12, -2.65, 0.34, 4.91],
-    ["arrival",  5.85, -0.09, -4.75, 0.48, 1.33],
-    ["arrival", -4.75, -0.11, -6.65, 0.41, 3.62],
-    ["arrival",  4.95, -0.13, -8.20, 0.31, 5.36],
+    ["arrival", -4.75, -0.12,  0.35, 0.28, 2.85],
     ["green_tunnel",  6.05, -0.10, -10.55, 0.55, 0.71],
     ["green_tunnel", -5.35, -0.13, -12.10, 0.36, 2.43],
     ["green_tunnel", -6.20, -0.08, -15.15, 0.49, 4.28],
