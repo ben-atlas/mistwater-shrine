@@ -9,9 +9,10 @@ and physical-device performance testing are still in progress.
 
 ## Controls
 
-- WASD or arrow keys: move
+- WASD or arrow keys: move relative to the camera
+- Mouse drag or Q/E: orbit the camera (it smoothly recenters after release)
 - Space: leap; press again in the air to double jump
-- Touch: drag to move and use the Leap button
+- Touch: drag left to move, drag right to orbit, and use the Leap button
 
 ## Play
 

@@ -337,15 +337,28 @@ const touchMove = new THREE.Vector2();
 const movePad = document.querySelector(".move-pad");
 const movePadKnob = document.querySelector(".move-pad-knob");
 let touchPointer = null;
+let cameraPointer = null;
 let touchOriginX = 0;
 let touchOriginY = 0;
+let cameraDragX = 0;
+let orbitYaw = 0;
+let orbitYawTarget = 0;
+let lastCameraInputAt = -Infinity;
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Space") jump();
 });
 addEventListener("keyup", (e) => (keys[e.code] = false));
 renderer.domElement.addEventListener("pointerdown", (e) => {
-  if (e.pointerType === "mouse" || e.clientX > innerWidth * 0.68) return;
+  const wantsCamera =
+    e.pointerType === "mouse" || e.clientX > innerWidth * 0.62;
+  if (wantsCamera) {
+    cameraPointer = e.pointerId;
+    cameraDragX = e.clientX;
+    lastCameraInputAt = gameNow();
+    renderer.domElement.setPointerCapture(e.pointerId);
+    return;
+  }
   touchPointer = e.pointerId;
   touchOriginX = e.clientX;
   touchOriginY = e.clientY;
@@ -355,6 +368,17 @@ renderer.domElement.addEventListener("pointerdown", (e) => {
   renderer.domElement.setPointerCapture(e.pointerId);
 });
 renderer.domElement.addEventListener("pointermove", (e) => {
+  if (e.pointerId === cameraPointer) {
+    const deltaX = e.clientX - cameraDragX;
+    cameraDragX = e.clientX;
+    orbitYawTarget = THREE.MathUtils.clamp(
+      orbitYawTarget - deltaX * 0.006,
+      -Math.PI * 0.72,
+      Math.PI * 0.72,
+    );
+    lastCameraInputAt = gameNow();
+    return;
+  }
   if (e.pointerId !== touchPointer) return;
   touchMove.set(e.clientX - touchOriginX, e.clientY - touchOriginY);
   const length = touchMove.length();
@@ -363,6 +387,10 @@ renderer.domElement.addEventListener("pointermove", (e) => {
   touchMove.divideScalar(54);
 });
 function releaseTouch(e) {
+  if (e.pointerId === cameraPointer) {
+    cameraPointer = null;
+    return;
+  }
   if (e.pointerId !== touchPointer) return;
   touchPointer = null;
   touchMove.set(0, 0);
@@ -414,6 +442,10 @@ let prev = performance.now(),
   totalFrames = 0;
 const clock = new THREE.Clock();
 const cameraTarget = new THREE.Vector3();
+const cameraLookTarget = new THREE.Vector3();
+const desiredCameraPosition = new THREE.Vector3();
+const cameraRayDirection = new THREE.Vector3();
+const cameraRaycaster = new THREE.Raycaster();
 // Seed the follow camera at its authored arrival pose. Starting from Three's
 // default origin made the first several visible frames fly through the hero
 // and foreground bank while the damped follow caught up.
@@ -430,6 +462,10 @@ camera.lookAt(
 );
 const shrineLanding = LANDMARKS.find((item) => item.id === "shrine_landing");
 const shrineCollision = shrineLanding.collision;
+const cameraObstacles = [
+  ...dressingBakes,
+  ...shrineRevealLandmarks,
+];
 function animate(now) {
   if (!deterministicCapture) requestAnimationFrame(animate);
   const real = deterministicCapture ? 1 / 60 : (now - prev) / 1000;
@@ -444,6 +480,15 @@ function animate(now) {
     fpst = now;
   }
   if (playing) {
+    const orbitKey = (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
+    if (orbitKey) {
+      orbitYawTarget = THREE.MathUtils.clamp(
+        orbitYawTarget + orbitKey * dt * 1.65,
+        -Math.PI * 0.72,
+        Math.PI * 0.72,
+      );
+      lastCameraInputAt = now;
+    }
     let dx =
         (keys.KeyD || keys.ArrowRight ? 1 : 0) -
         (keys.KeyA || keys.ArrowLeft ? 1 : 0) +
@@ -457,6 +502,9 @@ function animate(now) {
     if (inputLength > 0.001) {
       dx /= rawInputLength;
       dz /= rawInputLength;
+      const localX = dx;
+      dx = localX * Math.cos(orbitYaw) + dz * Math.sin(orbitYaw);
+      dz = -localX * Math.sin(orbitYaw) + dz * Math.cos(orbitYaw);
     }
     const targetSpeed = inputLength * 5.2;
     const response = targetSpeed > moveSpeed ? 9 : 13;
@@ -662,23 +710,42 @@ function animate(now) {
   );
   camera.fov = THREE.MathUtils.damp(camera.fov, cameraVolume.fov, 4.5, dt);
   camera.updateProjectionMatrix();
-  cameraTarget.set(
-    hero.position.x +
-      cameraVolume.lateralBias -
-      moveVelocity.x * 0.08 +
-      Math.sin(t * 47) * cameraImpact,
-    hero.position.y +
-      cameraVolume.height +
-      Math.sin(t * 61) * cameraImpact * 0.7,
-    hero.position.z + cameraVolume.distance - moveVelocity.y * 0.08,
+  const cameraIdleMs = now - lastCameraInputAt;
+  if (cameraPointer === null && !keys.KeyQ && !keys.KeyE && cameraIdleMs > 1350) {
+    orbitYawTarget = THREE.MathUtils.damp(orbitYawTarget, 0, 0.82, dt);
+  }
+  orbitYaw = THREE.MathUtils.damp(orbitYaw, orbitYawTarget, 8.5, dt);
+  const orbitSin = Math.sin(orbitYaw);
+  const orbitCos = Math.cos(orbitYaw);
+  const speedRatio = THREE.MathUtils.clamp(moveSpeed / 5.2, 0, 1);
+  const lookAhead = cameraVolume.lookAhead + speedRatio * 2.4;
+  cameraLookTarget.set(
+    hero.position.x + moveVelocity.x * 0.48 + cameraVolume.lateralBias * orbitCos,
+    hero.position.y + cameraVolume.targetLift,
+    hero.position.z + moveVelocity.y * 0.48 - lookAhead,
   );
+  desiredCameraPosition.set(
+    hero.position.x + orbitSin * cameraVolume.distance + cameraVolume.lateralBias * orbitCos - moveVelocity.x * 0.08,
+    hero.position.y + cameraVolume.height,
+    hero.position.z + orbitCos * cameraVolume.distance - cameraVolume.lateralBias * orbitSin - moveVelocity.y * 0.08,
+  );
+  cameraRayDirection.subVectors(desiredCameraPosition, cameraLookTarget);
+  const desiredDistance = cameraRayDirection.length();
+  cameraRayDirection.normalize();
+  cameraRaycaster.set(cameraLookTarget, cameraRayDirection);
+  cameraRaycaster.far = desiredDistance;
+  const cameraHit = cameraRaycaster.intersectObjects(cameraObstacles, true)[0];
+  const safeDistance = cameraHit
+    ? Math.max(1.35, cameraHit.distance - 0.42)
+    : desiredDistance;
+  cameraTarget
+    .copy(cameraLookTarget)
+    .addScaledVector(cameraRayDirection, safeDistance);
+  cameraTarget.x += Math.sin(t * 47) * cameraImpact;
+  cameraTarget.y += Math.sin(t * 61) * cameraImpact * 0.7;
   camera.position.lerp(cameraTarget, 1 - Math.exp(-dt * 5));
   sky.position.copy(camera.position);
-  camera.lookAt(
-    hero.position.x + moveVelocity.x * 0.24 + cameraVolume.lateralBias,
-    hero.position.y + cameraVolume.targetLift,
-    hero.position.z + moveVelocity.y * 0.5 - cameraVolume.lookAhead,
-  );
+  camera.lookAt(cameraLookTarget);
   if (routeHint) {
     routeHint.textContent =
       hero.position.z < -41
@@ -701,6 +768,13 @@ function animate(now) {
     won,
     draws: renderer.info.render.calls,
     tris: renderer.info.render.triangles,
+    camera: {
+      yaw: orbitYaw,
+      targetYaw: orbitYawTarget,
+      distance: camera.position.distanceTo(cameraLookTarget),
+      obstructed: Boolean(cameraHit),
+      lookAhead,
+    },
   };
 }
 if (deterministicCapture) {
