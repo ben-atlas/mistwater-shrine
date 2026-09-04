@@ -9,7 +9,7 @@ below have shipped. Each checkpoint requires a deployed, browser-verified build.
 | 2. Enemy gameplay | Complete | Three crocodile wardens: melee pursuit/windups and ranged telegraphed arcing bombs; staff attack, health, guard/dodge, knockback, hit-stop, reactions, defeat state, and shrine objective gate. Deterministic Chromium assertions and visual evidence: `outputs/goal7-checkpoint2-combat.png` and `outputs/goal7-checkpoint2-combat-report.json`. |
 | 3. Lighting and atmosphere | Complete | Warm directional sunlight, cool mist, three lantern pools, contact shadows, eight localized fog banks, and stronger reflected highlights. Deterministic local and permanent-URL verification passed. Evidence: `outputs/goal7-checkpoint3-atmosphere.png` and report. |
 | 4. Sky and horizon | Complete | Five layered cloud banks, two atmospheric mountain ranges, 18 bamboo silhouettes, four submerged ruin gates, seven birds, and three drifting horizon-mist bands. Deterministic browser assertions and visual evidence: `outputs/goal7-checkpoint4-horizon.png` and report. |
-| 5. Branching flooded rescue hub | Pending | Not started. |
+| 5. Branching flooded rescue hub | Complete | Six solid islands form four named links: two reconnecting rescue loops, a far loop, and one combat-gated shortcut. Three rescue beacons, three authored enemy posts, and a central three-tier pagoda are browser verified. Evidence: `outputs/goal7-checkpoint5-rescue-hub.png` and report. |
 
 Checkpoint 1 browser assertions: orbit changed by more than 0.5 radians,
 forward input produced lateral world movement while orbited, camera target yaw

@@ -2,7 +2,8 @@
 
 An original browser game built with Three.js, the 404 Game Recipe, and Atlas-generated concept direction.
 
-Cross the drowned garden, gather three lantern sparks, and awaken the shrine.
+Explore the branching drowned garden, rescue three lantern keepers, defeat the
+marsh wardens, and awaken the shrine.
 
 This URL currently serves the latest work-in-progress build. Visual finishing
 and physical-device performance testing are still in progress.
@@ -15,6 +16,9 @@ and physical-device performance testing are still in progress.
 - J: staff strike
 - K: hold to guard; tap while moving to dodge
 - Touch: drag left to move, drag right to orbit, and use the Leap button
+
+The flooded hub contains two reconnecting island routes, an optional combat
+shortcut, and a central pagoda that anchors navigation.
 
 ## Play
 

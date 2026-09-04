@@ -16,14 +16,14 @@ const initial = await page.evaluate(() => window.__GAME__);
 
 // Face and strike the first melee warden. Priming only shortens the audit;
 // the hit still travels through the production input and damage path.
-await page.evaluate(() => window.__COMBAT_TEST__.teleport(.55, -15.7));
+await page.evaluate(() => { const e = window.__COMBAT_TEST__.enemy(0); window.__COMBAT_TEST__.teleport(e.position[0], e.position[1] + 1.15); });
 await page.evaluate(() => window.__COMBAT_TEST__.primeEnemy(0));
 await page.keyboard.down("KeyW"); await page.evaluate(() => window.__STEP__(2)); await page.keyboard.up("KeyW");
 await page.keyboard.press("KeyJ"); await page.evaluate(() => window.__STEP__(2));
 const afterMelee = await page.evaluate(() => ({ game: window.__GAME__, enemy: window.__COMBAT_TEST__.enemy(0) }));
 
 // Enter ranged aggro and catch both the warning/bomb and eventual damage.
-await page.evaluate(() => window.__COMBAT_TEST__.teleport(-3.35, -20.05));
+await page.evaluate(() => { const e = window.__COMBAT_TEST__.enemy(1); window.__COMBAT_TEST__.teleport(e.position[0], e.position[1] + .4); });
 await page.evaluate(() => window.__COMBAT_TEST__.launchBomb(1));
 await page.evaluate(() => window.__STEP__(20));
 const telegraph = await page.evaluate(() => window.__GAME__);

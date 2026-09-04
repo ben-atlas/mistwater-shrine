@@ -197,6 +197,31 @@ export const OPTIONAL_ROUTE = Object.freeze([
   },
 ]);
 
+// Checkpoint 5 — the drowned garden is now a hub rather than a single-file
+// runway. These broad, solid islands overlap the lotus links below, creating
+// two loops around a central landmark and a risky cross-water shortcut.
+export const HUB_ISLANDS = Object.freeze([
+  { id: "arrival_isle", x: -1.0, z: 1.6, rx: 4.2, rz: 3.3, y: 0.18, checkpoint: true },
+  { id: "west_rescue", x: -5.0, z: -12.2, rx: 3.5, rz: 4.5, y: 0.22, rescue: "REED KEEPER" },
+  { id: "pagoda_isle", x: 0.2, z: -23.4, rx: 4.5, rz: 4.0, y: 0.28, checkpoint: true, landmark: true },
+  { id: "east_rescue", x: 5.1, z: -33.0, rx: 3.35, rz: 4.1, y: 0.2, rescue: "LANTERN KEEPER" },
+  { id: "west_rescue_far", x: -4.9, z: -34.5, rx: 3.15, rz: 3.55, y: 0.2, rescue: "BELL KEEPER" },
+  { id: "shrine_approach", x: 0.45, z: -40.6, rx: 4.15, rz: 2.6, y: 0.24, checkpoint: true },
+]);
+
+export const HUB_LINKS = Object.freeze([
+  { id: "west_loop", from: "arrival_isle", via: "west_rescue", to: "pagoda_isle" },
+  { id: "east_loop", from: "pagoda_isle", via: "east_rescue", to: "shrine_approach" },
+  { id: "far_loop", from: "pagoda_isle", via: "west_rescue_far", to: "shrine_approach" },
+  { id: "combat_shortcut", from: "west_rescue", to: "east_rescue", gated: true },
+]);
+
+export const ENEMY_SPAWNS = Object.freeze([
+  { id: "west_jaw", role: "melee", x: -4.7, z: -12.2, island: "west_rescue" },
+  { id: "pagoda_bomber", role: "ranged", x: 2.2, z: -23.0, island: "pagoda_isle" },
+  { id: "east_jaw", role: "melee", x: 5.0, z: -33.0, island: "east_rescue" },
+]);
+
 export const LANDMARKS = Object.freeze([
   {
     id: "shrine_footing",

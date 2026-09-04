@@ -14,6 +14,9 @@ import {
   DRESSING,
   BACKGROUND,
   CAMERA_VOLUMES,
+  HUB_ISLANDS,
+  HUB_LINKS,
+  ENEMY_SPAWNS,
 } from "./world-layout.js";
 
 setSurfaceDefaults({ on: true, size: 512, normalScale: 0.72 });
@@ -276,6 +279,37 @@ for (const placement of placements) {
   pads.push(pad);
 }
 
+// Broad authored landings turn the former forward-only pad course into a
+// flooded rescue hub. Uneven concentric discs give every island a distinct,
+// readable bank without touching the water shader or shoreline primitives.
+const hubIslands = [];
+const islandStone = new THREE.MeshStandardMaterial({ color: 0x48665a, roughness: .92 });
+const islandMoss = new THREE.MeshStandardMaterial({ color: 0x66805f, roughness: 1 });
+for (const island of HUB_ISLANDS) {
+  const group = new THREE.Group(); group.name = `HubIsland_${island.id}`;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.08, .48, 14), islandStone);
+  base.scale.set(island.rx, 1, island.rz); base.position.y = island.y - .22; base.receiveShadow = true;
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.02, .12, 14), islandMoss);
+  crown.scale.set(island.rx * .94, 1, island.rz * .94); crown.position.y = island.y + .08; crown.receiveShadow = true;
+  group.add(base, crown); group.position.set(island.x, 0, island.z); scene.add(group);
+  hubIslands.push({ ...island, group, top: island.y + .14 });
+}
+
+// Central landmark: a deliberately tall three-roof pagoda readable from both
+// loops. The open ground floor keeps movement around the hub unobstructed.
+const pagoda = new THREE.Group(); pagoda.name = "CentralRescuePagoda";
+const pagodaWood = new THREE.MeshStandardMaterial({ color: 0x532f27, roughness: .78 });
+const pagodaRoof = new THREE.MeshStandardMaterial({ color: 0x182f2b, roughness: .7 });
+for (const [x,z] of [[-1.25,-1.05],[1.25,-1.05],[-1.25,1.05],[1.25,1.05]]) {
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.11,.14,4.9,7),pagodaWood); post.position.set(x,2.5,z); post.castShadow=true; pagoda.add(post);
+}
+for (let tier=0;tier<3;tier++) {
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(.35,2.35-tier*.38,.48,4),pagodaRoof);
+  roof.position.y=2.0+tier*1.45; roof.rotation.y=Math.PI*.25; roof.scale.y=.55; roof.castShadow=true; pagoda.add(roof);
+}
+const beacon = new THREE.PointLight(0xffb858,7.5,11,2); beacon.position.y=3.1; pagoda.add(beacon);
+pagoda.position.set(.2,.38,-23.4); scene.add(pagoda);
+
 const availableDressing = [...DRESSING, ...BACKGROUND]
   .filter(
     (item) =>
@@ -457,9 +491,7 @@ function createCrocodile(role, x, z) {
   const enemy = { role, root, contactShadow, hp: role === "ranged" ? 2 : 3, maxHp: role === "ranged" ? 2 : 3, cooldown: role === "ranged" ? 1.4 : 0.55, windup: 0, stagger: 0, flash: 0, alive: true, roleMark };
   enemies.push(enemy); return enemy;
 }
-createCrocodile("melee", 0.55, -16.9);
-createCrocodile("ranged", -3.35, -20.45);
-createCrocodile("melee", 2.25, -28.25);
+for (const spawn of ENEMY_SPAWNS) createCrocodile(spawn.role, spawn.x, spawn.z);
 const bombs = [];
 const bombGeometry = new THREE.IcosahedronGeometry(0.22, 1);
 const bombMaterial = new THREE.MeshStandardMaterial({ color: 0x382b22, emissive: 0xff5426, emissiveIntensity: 0.8 });
@@ -515,18 +547,17 @@ const sparkHaloMaterial = new THREE.MeshBasicMaterial({
   depthWrite: false,
   toneMapped: false,
 });
-for (const pad of pads.filter(
-  (candidate) => candidate.route.reward === "spark",
-)) {
+for (const island of hubIslands.filter((candidate) => candidate.rescue)) {
   const spark = new THREE.Group();
-  spark.name = `LanternSpark_${pad.route.id}`;
+  spark.name = `RescueBeacon_${island.id}`;
   const core = new THREE.Mesh(sparkCoreGeometry, sparkCoreMaterial);
   core.scale.set(0.72, 1.18, 0.72);
   const halo = new THREE.Mesh(sparkHaloGeometry, sparkHaloMaterial);
   halo.rotation.x = Math.PI * 0.5;
   halo.scale.y = 0.72;
   spark.add(core, halo);
-  spark.position.set(pad.x, 1, pad.z);
+  spark.position.set(island.x, island.top + .9, island.z);
+  spark.userData.rescue = island.rescue;
   spark.userData.halo = halo;
   scene.add(spark);
   sparks.push(spark);
@@ -621,7 +652,7 @@ let playing = false,
   fallStartedAt = 0,
   resetCount = 0,
   pendingDoubleJump = false,
-  checkpointPad = pads[0],
+  checkpointPad = { x: HUB_ISLANDS[0].x, z: HUB_ISLANDS[0].z, top: hubIslands[0].top, waterState: { offset: 0 } },
   cameraImpact = 0;
 const deterministicCapture = new URLSearchParams(location.search).has(
   "deterministicCapture",
@@ -759,6 +790,7 @@ function animate(now) {
     hero.position.y += vy * dt;
     let floor = -0.55;
     let landingPad = null;
+    let landingIsland = null;
     for (const p of pads) {
       if (Math.hypot(hero.position.x - p.x, hero.position.z - p.z) < p.r) {
         const surface = p.top + p.waterState.offset;
@@ -766,6 +798,15 @@ function animate(now) {
           floor = surface;
           landingPad = p;
         }
+      }
+    }
+    for (const island of hubIslands) {
+      const nx = (hero.position.x - island.x) / island.rx;
+      const nz = (hero.position.z - island.z) / island.rz;
+      if (nx * nx + nz * nz < .88 && vy <= 0 && island.top > floor) {
+        floor = island.top;
+        landingIsland = island;
+        landingPad = null;
       }
     }
     const shrineHalfWidth = shrineCollision.size[0] * 0.5;
@@ -806,6 +847,7 @@ function animate(now) {
       airJumps = 0;
       lastGroundedAt = now;
       if (landingPad?.route.rest) checkpointPad = landingPad;
+      if (landingIsland?.checkpoint) checkpointPad = { ...landingIsland, waterState: { offset: 0 } };
     } else onGround = false;
     if (hero.position.y < 0.04 && !fallStartedAt) {
       fallStartedAt = now;
@@ -859,6 +901,7 @@ function animate(now) {
         s.visible = false;
         score++;
         document.getElementById("score").textContent = score;
+        combatStatus.textContent = `${s.userData.rescue} RESCUED · ${3 - score} REMAIN`;
         waterSystem.emitImpulse({
           position: hero.position,
           impactSpeed: 3.8,
@@ -1028,7 +1071,7 @@ function animate(now) {
         ? score === 3 && enemiesDefeated === enemies.length
           ? "THE SPIRIT STIRS · ENTER THE GATE"
           : score < 3 ? `THE SHRINE AWAITS ${3 - score} MORE SPARK${3 - score === 1 ? "" : "S"}` : `DEFEAT ${enemies.length - enemiesDefeated} MARSH WARDEN${enemies.length - enemiesDefeated === 1 ? "" : "S"}`
-        : hero.position.z < -12 && enemiesDefeated < enemies.length ? `ENCOUNTER SEALED · ${enemies.length - enemiesDefeated} WARDENS REMAIN` : "LEAP BETWEEN LOTUS LEAVES · DOUBLE-TAP SPACE IN THE AIR";
+        : hero.position.z < -12 && enemiesDefeated < enemies.length ? `HUB ENCOUNTER · ${enemies.length - enemiesDefeated} WARDENS REMAIN` : "CHOOSE A BRANCH · RESCUE THE THREE KEEPERS";
   }
   renderer.render(scene, camera);
   window.__GAME__ = {
@@ -1044,6 +1087,7 @@ function animate(now) {
     combat: { enemiesAlive: enemies.length - enemiesDefeated, enemiesDefeated, bombs: bombs.length, attacking: attackActive > 0, dodging: dodgeTime > 0, guarding: Boolean(keys.KeyK && dodgeTime <= 0), hits: playerHits },
     atmosphere: { mistBanks: mistBanks.length, lanternPools: lanternPools.length, sunIntensity: sun.intensity, fogDensity: scene.fog.density, contactShadows: 1 + enemies.filter((enemy) => enemy.alive).length },
     horizon: { cloudLayers: cloudLayers.length, mountainLayers: mountainLayers.length, bambooSilhouettes: bambooSilhouettes.length, submergedRuins: submergedRuins.length, birds: birds.length, mistBands: horizonMist.length },
+    hub: { islands: hubIslands.length, loops: HUB_LINKS.length, shortcuts: HUB_LINKS.filter((link) => link.gated).length, rescueBeacons: sparks.length, pagoda: pagoda.name, enemyPosts: ENEMY_SPAWNS.length },
     over: false,
     won,
     draws: renderer.info.render.calls,
