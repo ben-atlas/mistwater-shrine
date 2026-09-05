@@ -149,11 +149,20 @@ export default function (THREE) {
       if (i < seg) {
         const q = i * 4;
         const n = q + 4;
+        // Top and underside.
         id.push(q, n, q + 1, q + 1, n, n + 1);
         id.push(q + 2, q + 3, n + 2, q + 3, n + 3, n + 2);
+        // Both long faces. The original ledge only closed the water-facing
+        // edge, so orbiting behind the bank exposed a row of floating strips.
         id.push(q, q + 2, n, q + 2, n + 2, n);
+        id.push(q + 1, n + 1, q + 3, q + 3, n + 1, n + 3);
       }
     }
+    // Close both ends so the sediment ledge is a volume from every camera
+    // direction, not a one-sided ribbon.
+    const last = seg * 4;
+    id.push(0, 1, 2, 2, 1, 3);
+    id.push(last, last + 2, last + 1, last + 2, last + 3, last + 1);
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(p, 3));
     g.setIndex(id);

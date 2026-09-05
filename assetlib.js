@@ -350,6 +350,21 @@ export async function ASSET(url, opts = {}) {
   if (opts.surfaces || surfaceDefaultsEnabled()) {
     applySurfaces(THREE, inst, opts.surfaces === true ? {} : opts.surfaces);
   }
+  // The game has a freely orbiting camera, so an authored thin surface may be
+  // approached from either side. Treat every loaded asset material as
+  // two-sided; closed hero geometry is visually unchanged, while leaves,
+  // cloth, eroded shelves and other deliberately thin details cannot vanish
+  // because of back-face culling. This is applied after surface replacement so
+  // generated PBR materials receive the same guarantee.
+  inst.traverse((o) => {
+    if (!o.isMesh || !o.material) return;
+    const materials = Array.isArray(o.material) ? o.material : [o.material];
+    for (const material of materials) {
+      material.side = THREE.DoubleSide;
+      material.shadowSide = THREE.DoubleSide;
+      material.needsUpdate = true;
+    }
+  });
   return inst;
 }
 
