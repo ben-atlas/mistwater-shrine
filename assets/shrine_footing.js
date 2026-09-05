@@ -1,107 +1,135 @@
 export default function (THREE) {
   const root = new THREE.Group();
-  root.name = 'shrine_footing_waterline_apron';
+  root.name = 'shrine_footing_b';
+  root.userData.staticBakeable = true;
 
-  const material = (name, color, roughness = 0.96) => {
-    const m = new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 });
-    m.name = name;
-    return m;
+  const makeMaterial = (name, color, roughness = 0.95) => {
+    const material = new THREE.MeshStandardMaterial({ color, roughness });
+    material.name = name; return material;
   };
-  const submergedStone = material('stone_submerged_masonry', 0x263734, 0.91);
-  const oldStone = material('stone_weathered_course', 0x526059, 0.96);
-  const silt = material('soil_waterline_silt', 0x39382d, 1);
-  const moss = material('foliage_waterline_moss', 0x405338, 1);
-  const rootMat = material('foliage_exposed_roots', 0x44382b, 1);
+  const stone = makeMaterial('stone', 0x59635e, 0.98);
+  const darkStone = makeMaterial('stone', 0x293b3c, 1.0);
+  const paleStone = makeMaterial('stone', 0x778078, 0.96);
+  const soil = makeMaterial('soil', 0x4a3929, 1.0);
+  const wetSoil = makeMaterial('soil', 0x292820, 1.0);
+  const moss = makeMaterial('foliage', 0x4b693c, 1.0);
+  const reeds = makeMaterial('foliage', 0x70804c, 0.94);
 
-  const add = (geometry, mat, name, x = 0, y = 0, z = 0) => {
-    const mesh = new THREE.Mesh(geometry, mat);
-    mesh.name = name;
-    mesh.position.set(x, y, z);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    root.add(mesh);
-    return mesh;
+  const add = (geometry, material, name) => {
+    const mesh = new THREE.Mesh(geometry, material); mesh.name = name;
+    mesh.castShadow = true; mesh.receiveShadow = true; root.add(mesh); return mesh;
   };
 
-  // Organic concentric shelves. Each outline changes direction frequently, so the
-  // waterline never reads as a disguised rectangular slab from any approach.
-  const outline = [
-    [-6.40,-3.42],[-6.12,-4.12],[-5.36,-4.48],[-4.42,-4.35],[-3.72,-4.68],
-    [-2.70,-4.42],[-1.72,-4.75],[-0.72,-4.49],[0.18,-4.66],[1.12,-4.40],
-    [2.08,-4.65],[3.02,-4.36],[4.06,-4.58],[4.92,-4.24],[5.78,-4.36],
-    [6.22,-3.82],[6.08,-3.05],[6.40,-2.25],[6.15,-1.35],[6.34,-0.46],
-    [6.10,0.42],[6.32,1.28],[6.02,2.20],[6.24,3.05],[5.82,3.92],
-    [5.08,4.23],[4.16,4.05],[3.28,4.52],[2.30,4.28],[1.34,4.62],
-    [0.32,4.38],[-0.62,4.57],[-1.58,4.31],[-2.48,4.55],[-3.34,4.24],
-    [-4.34,4.43],[-5.22,4.12],[-5.96,4.24],[-6.31,3.53],[-6.12,2.70],
-    [-6.36,1.88],[-6.15,0.98],[-6.40,0.12],[-6.17,-0.72],[-6.36,-1.56],[-6.13,-2.38]
-  ];
-  const shelf = (points, h, y, mat, name, scale = 1) => {
-    const shape = new THREE.Shape();
-    points.forEach((p, i) => (i ? shape.lineTo(p[0] * scale, p[1] * scale) : shape.moveTo(p[0] * scale, p[1] * scale)));
-    shape.closePath();
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false, steps: 1, curveSegments: 1 });
-    geo.rotateX(Math.PI / 2);
-    // Extrusion points down after rotation: y is the desired top surface.
-    return add(geo, mat, name, 0, y, 0);
-  };
-  shelf(outline, 0.30, 0.30, submergedStone, 'continuous_submerged_foundation', 1);
-  shelf(outline, 0.13, 0.43, silt, 'irregular_silt_skirt', 0.955);
-  shelf(outline, 0.10, 0.52, moss, 'moss_waterline_shelf', 0.905);
-
-  // Broken upper masonry: short separated runs leave an open centre for the 11 x 8m
-  // gameplay platform, while clearly continuing its old foundation around all sides.
-  const blocks = [
-    [-4.72,-3.93,1.42,.46,.34,.05],[-2.80,-4.03,1.55,.40,.32,-.04],[-.72,-4.10,1.32,.46,.30,.03],
-    [1.35,-4.02,1.48,.42,.34,-.03],[3.36,-4.04,1.30,.45,.31,.05],[5.05,-3.77,.88,.42,.38,-.11],
-    [-5.78,-2.66,.56,1.20,.32,-.04],[-5.91,-.88,.48,1.18,.34,.05],[-5.82,.92,.55,1.04,.30,-.06],[-5.76,2.65,.58,1.12,.37,.08],
-    [5.79,-2.52,.58,1.12,.34,.05],[5.88,-.72,.48,1.25,.31,-.05],[5.76,1.10,.54,1.10,.36,.08],[5.72,2.83,.62,1.00,.32,-.07],
-    [-4.92,3.82,1.18,.48,.32,-.04],[-3.08,4.02,1.32,.40,.36,.06],[-1.10,4.02,1.42,.44,.30,-.03],
-    [.92,4.00,1.30,.45,.34,.04],[2.88,3.96,1.40,.42,.31,-.05],[4.72,3.80,1.08,.48,.36,.07]
-  ];
-  for (let i = 0; i < blocks.length; i++) {
-    const [x,z,w,d,h,r] = blocks[i];
-    const geo = new THREE.BoxGeometry(w, h, d, 1, 1, 1);
-    const b = add(geo, i % 5 === 0 ? moss : oldStone, `broken_perimeter_stone_${i}`, x, 0.43 + h / 2, z);
-    b.rotation.y = r;
-    b.rotation.z = ((i % 3) - 1) * 0.018;
+  // Hand-authored concentric shoreline rings. The perimeter wanders while the broad middle
+  // remains low and unobtrusive beneath the 11 x 8 m shrine platform.
+  const count = 28;
+  const outer = [], mid = [], inner = [];
+  const noise = [1,.94,1.04,.91,1.02,.97,1.06,.93,1,.89,1.04,.96,1.03,.92,1.07,.95,1.01,.90,1.05,.94,1.02,.91,1.06,.96,1.01,.92,1.04,.95];
+  for (let i = 0; i < count; i++) {
+    const a = i / count * Math.PI * 2;
+    const asymX = .18 * Math.sin(a * 3 + .6) + .10 * Math.cos(a * 5);
+    const asymZ = .15 * Math.sin(a * 4 - .4);
+    outer.push([Math.cos(a) * 6.36 * noise[i] + asymX, .075 + .025 * Math.sin(a * 3), Math.sin(a) * 4.70 * noise[(i + 5) % count] + asymZ]);
+    mid.push([Math.cos(a) * (5.82 + .12 * Math.sin(a * 5)), .28 + .035 * Math.cos(a * 4), Math.sin(a) * (4.18 + .11 * Math.sin(a * 3))]);
+    inner.push([Math.cos(a) * 5.20, .45 + .018 * Math.sin(a * 2), Math.sin(a) * 3.70]);
   }
 
-  // Small interruptions break the rhythm further: two stones and two exposed roots,
-  // deliberately kept outside the playable floor footprint.
-  const interruptions = [
-    [-5.55,.52,-3.60,.62,.22,.50,-.18], [5.58,.49,3.55,.55,.18,.46,.20]
+  function annulus(ringA, ringB, material, name) {
+    const vertices = [], indices = [];
+    for (let i = 0; i < count; i++) vertices.push(...ringA[i], ...ringB[i]);
+    for (let i = 0; i < count; i++) {
+      const n = (i + 1) % count, a = i * 2, b = a + 1, c = n * 2, d = c + 1;
+      indices.push(a, c, b, c, d, b);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices); geometry.computeVertexNormals();
+    return add(geometry, material, name);
+  }
+  annulus(outer, mid, darkStone, 'submerged_eroded_toe');
+  annulus(mid, inner, soil, 'sloped_shore_bank');
+
+  // Low central cap sits under the platform. Its rounded irregular edge cannot read as a slab.
+  const capShape = new THREE.Shape();
+  for (let i = 0; i < count; i++) {
+    const a = i / count * Math.PI * 2;
+    const x = Math.cos(a) * 5.22, z = Math.sin(a) * 3.72;
+    if (i === 0) capShape.moveTo(x, z); else capShape.lineTo(x, z);
+  }
+  capShape.closePath();
+  const capGeo = new THREE.ExtrudeGeometry(capShape, { depth: .09, steps: 1, bevelEnabled: false, curveSegments: 1 });
+  capGeo.rotateX(Math.PI / 2); capGeo.translate(0, .45, 0);
+  add(capGeo, wetSoil, 'low_islet_crown');
+
+  // Uneven waterline shelves sit around all sides, separated by bites of soil and water.
+  const shelfData = [
+    [-4.65,.27,3.82,1.40,.16,.58,-.12],[-2.25,.30,4.15,1.22,.15,.50,.08],[.45,.31,4.25,1.35,.14,.48,-.04],[3.18,.29,3.98,1.55,.16,.54,.10],
+    [-4.98,.28,-3.66,1.34,.15,.57,.09],[-2.05,.31,-4.17,1.42,.14,.46,-.08],[1.05,.29,-4.22,1.25,.16,.51,.05],[4.05,.28,-3.52,1.46,.15,.55,-.11],
+    [-5.72,.30,1.72,.58,.15,1.15,.04],[-5.88,.28,-1.05,.55,.14,1.28,-.05],[5.86,.29,1.34,.56,.16,1.20,-.06],[5.72,.30,-1.62,.61,.14,1.10,.08],
   ];
-  interruptions.forEach((q, i) => {
-    const m = add(new THREE.DodecahedronGeometry(0.5, 0), oldStone, `tumbled_waterline_stone_${i}`, q[0], q[1], q[2]);
-    m.scale.set(q[3], q[4], q[5]); m.rotation.y = q[6];
-  });
-  [[-5.84,0.43,3.40,.72,-.22],[5.88,0.42,-3.40,.68,.18]].forEach((q, i) => {
-    const geo = new THREE.CylinderGeometry(0.075, 0.12, q[3], 7, 1, false);
-    const r = add(geo, rootMat, `exposed_root_${i}`, q[0], q[1], q[2]);
-    r.rotation.z = Math.PI / 2; r.rotation.y = q[4];
-  });
+  for (const [x,y,z,sx,sy,sz,rot] of shelfData) {
+    const rock = add(new THREE.IcosahedronGeometry(1, 2), stone, 'waterline_stone_shelf');
+    rock.position.set(x,y,z); rock.scale.set(sx,sy,sz); rock.rotation.set(.04,rot,.03);
+  }
 
-  // Exact contract: 12.8 W x 0.62 H x 9.5 D, base y=0 and centred.
-  const measure = () => {
-    root.updateMatrixWorld(true);
-    const box = new THREE.Box3();
-    root.traverse((n) => { if (n.isMesh) box.expandByObject(n); });
-    return box;
-  };
-  let box = measure();
-  const size = box.getSize(new THREE.Vector3());
-  root.scale.set(12.8 / size.x, 0.62 / size.y, 9.5 / size.z);
-  root.updateMatrixWorld(true);
-  box = measure();
-  const center = box.getCenter(new THREE.Vector3());
-  root.children.forEach((n) => {
-    n.position.x -= center.x / root.scale.x;
-    n.position.y -= box.min.y / root.scale.y;
-    n.position.z -= center.z / root.scale.z;
-  });
+  // Moss cushions overlap selected shelves and make the waterline legible at game distance.
+  for (const [x,z,sx,sz] of [[-4.6,3.95,.72,.29],[.4,4.31,.74,.25],[4.15,-3.60,.78,.28],[-5.88,-1.0,.29,.65],[5.84,1.3,.30,.67]]) {
+    const patch = add(new THREE.IcosahedronGeometry(1, 2), moss, 'mossy_waterline');
+    patch.position.set(x,.405,z); patch.scale.set(sx,.055,sz); patch.rotation.y = x * .13;
+  }
 
-  root.userData.staticBakeable = true;
-  root.userData.placement = { worldY: -0.30, waterY: 0, platformFootprint: [11, 8] };
+  // Fallen corner masonry implies the footprint of older construction without crowding the top.
+  const blockData = [
+    [-5.00,.45,3.05,.82,.30,.52,-.20],[-4.36,.43,3.48,.58,.26,.44,.13],
+    [4.85,.44,-3.07,.78,.28,.56,.17],[5.33,.39,-2.50,.50,.24,.40,-.28],
+    [4.72,.40,3.20,.52,.22,.48,.32],[-4.95,.41,-3.00,.57,.24,.45,-.25],
+  ];
+  for (const [x,y,z,w,h,d,ry] of blockData) {
+    const b = add(new THREE.BoxGeometry(w,h,d,2,2,2), paleStone, 'broken_corner_block');
+    b.position.set(x,y,z); b.rotation.set(.06,ry,(x + z) * .012);
+  }
+
+  // Sparse woody roots bridge from buried platform edge into the shore.
+  function branch(a, b, radius) {
+    const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
+    const delta = vb.clone().sub(va), mesh = add(new THREE.CylinderGeometry(radius*.7,radius,delta.length(),9,2), soil, 'exposed_root');
+    mesh.position.copy(va).add(vb).multiplyScalar(.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
+  }
+  branch([-4.55,.47,2.85],[-5.80,.20,3.68],.085);
+  branch([4.60,.47,-2.82],[5.73,.18,-3.75],.09);
+  branch([-5.10,.44,-2.45],[-5.92,.19,-3.30],.07);
+
+  // Two small reed clumps are enough to sell wet ground without becoming a garden border.
+  for (const [x,z] of [[-5.74,2.35],[5.62,-2.20]]) {
+    const tuft = new THREE.Group(); tuft.position.set(x,.28,z); root.add(tuft);
+    for (let i = 0; i < 3; i++) {
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(.018,.026,.32 + i*.06,6), reeds);
+      stem.name = 'reed_stem'; stem.position.set((i-1)*.07,.16+i*.03,(i%2)*.05); stem.rotation.z=(i-1)*.08;
+      stem.castShadow=true; tuft.add(stem);
+    }
+  }
+
+  // Finished-vertex normalization preserves the exact requested footprint despite irregularity.
+  const bounds = new THREE.Box3(), point = new THREE.Vector3(), matrix = new THREE.Matrix4(), instance = new THREE.Matrix4();
+  function measure() {
+    bounds.makeEmpty(); root.updateMatrixWorld(true);
+    root.traverse((node) => {
+      const position = node.isMesh && node.geometry.attributes.position; if (!position) return;
+      const put = (mat) => { for (let i=0;i<position.count;i++) bounds.expandByPoint(point.fromBufferAttribute(position,i).applyMatrix4(mat)); };
+      if (node.isInstancedMesh) { for(let i=0;i<node.count;i++){node.getMatrixAt(i,instance);put(matrix.multiplyMatrices(node.matrixWorld,instance));} }
+      else put(node.matrixWorld);
+    });
+  }
+  measure();
+  const size = bounds.getSize(new THREE.Vector3());
+  root.scale.set(12.8/size.x,.62/size.y,9.5/size.z);
+  measure();
+  const center = bounds.getCenter(new THREE.Vector3());
+  root.children.forEach((child) => {
+    child.position.x -= center.x/root.scale.x;
+    child.position.y -= bounds.min.y/root.scale.y;
+    child.position.z -= center.z/root.scale.z;
+  });
   return root;
 }

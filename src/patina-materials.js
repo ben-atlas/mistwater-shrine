@@ -5,6 +5,41 @@ const LACQUER_ROOT = "./assets/materials/aged-red-lacquer-timber/";
 const OXIDIZED_ROOF_ROOT = "./assets/materials/oxidized-roof-tile-metal/";
 const WATERLINE_ROOT = "./assets/materials/stained-waterline-masonry/";
 
+// Several 404 assets use authored BufferGeometry and therefore arrive without
+// UVs. A texture silently has no visible effect on those meshes. Generate a
+// deterministic box projection per triangle so every selected PBR surface has
+// real coordinates on horizontal and vertical faces alike.
+function ensureBoxProjectedUV(node, metresPerTile = 1.8) {
+  if (node.geometry.attributes.uv) {
+    if (!node.geometry.attributes.uv1) node.geometry.setAttribute("uv1", node.geometry.attributes.uv);
+    return;
+  }
+  let geometry = node.geometry.index ? node.geometry.toNonIndexed() : node.geometry.clone();
+  if (!geometry.attributes.normal) geometry.computeVertexNormals();
+  const position = geometry.attributes.position;
+  const normal = geometry.attributes.normal;
+  const uv = new Float32Array(position.count * 2);
+  const inv = 1 / metresPerTile;
+  for (let i = 0; i < position.count; i++) {
+    const ax = Math.abs(normal.getX(i));
+    const ay = Math.abs(normal.getY(i));
+    const az = Math.abs(normal.getZ(i));
+    if (ay >= ax && ay >= az) {
+      uv[i * 2] = position.getX(i) * inv;
+      uv[i * 2 + 1] = position.getZ(i) * inv;
+    } else if (ax >= az) {
+      uv[i * 2] = position.getZ(i) * inv;
+      uv[i * 2 + 1] = position.getY(i) * inv;
+    } else {
+      uv[i * 2] = position.getX(i) * inv;
+      uv[i * 2 + 1] = position.getY(i) * inv;
+    }
+  }
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  geometry.setAttribute("uv1", geometry.attributes.uv);
+  node.geometry = geometry;
+}
+
 function configure(texture, { color = false, repeat = 1.35, anisotropy = 4 } = {}) {
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(repeat, repeat);
@@ -174,6 +209,7 @@ export function applyMossyWetStone(root, material) {
       return name.includes("stone") || name.includes("masonry") || name.includes("foundation");
     });
     if (!shouldReplace) return;
+    ensureBoxProjectedUV(node, material.userData.patina?.metresPerTile || 1.8);
     // Three's aoMap samples uv1. Authored primitives already have uv; aliasing
     // the same attribute avoids another buffer allocation on mobile.
     if (node.geometry.attributes.uv && !node.geometry.attributes.uv1) {

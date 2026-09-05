@@ -1015,6 +1015,15 @@ for (const item of availableDressing) {
       child.material = materialWasArray ? mutedMaterials : mutedMaterials[0];
     });
   }
+  const dressingAssetName = `${item.id} ${item.asset}`.toLowerCase();
+  if (
+    patinaEnabled &&
+    (dressingAssetName.includes("bank") ||
+      dressingAssetName.includes("shore") ||
+      dressingAssetName.includes("rock"))
+  ) {
+    patinaMeshCount += applyMossyWetStone(object, mossyWetStone);
+  }
   if (patinaEnabled && item.id.startsWith("basin_edge_")) waterlineMeshCount += applyStainedWaterlineMasonry(object, stainedWaterline);
   let group = dressingGroups.get(item.chunk);
   if (!group) {

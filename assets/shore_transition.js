@@ -1,88 +1,54 @@
-// Selected from three verifier-clean candidates: an interlocked low boulder
-// chain with a recessed second course and a pebbled wet toe. It bridges the
-// authored bank masses without creating a straight artificial seawall.
-export default function shoreTransition(THREE) {
+// 404 Path B candidate C: closed, grounded terrain volume.
+// Reference: Treacherous Waters flooded karst banks and supplied defect screenshot.
+export default function generate(THREE) {
   const root = new THREE.Group();
-  root.name = "shore_transition_c_interlocked_shoal";
-  const stone = new THREE.MeshStandardMaterial({ color: 0x566159, roughness: 0.91, flatShading: true });
-  stone.name = "stone";
-  const wet = new THREE.MeshStandardMaterial({ color: 0x31423e, roughness: 0.6, flatShading: true });
-  wet.name = "stone";
-  const moss = new THREE.MeshStandardMaterial({ color: 0x3b5933, roughness: 0.97, flatShading: true });
-  moss.name = "foliage";
-
-  function rock(seed, x, y, z, sx, sy, sz, material) {
-    const geometry = new THREE.IcosahedronGeometry(1, 2).toNonIndexed();
-    const position = geometry.attributes.position;
-    for (let i = 0; i < position.count; i++) {
-      let px = position.getX(i);
-      let py = position.getY(i);
-      let pz = position.getZ(i);
-      const variation = 1 + 0.09 * Math.sin(px * 7 + seed) + 0.055 * Math.cos(pz * 9 - seed);
-      px *= variation;
-      pz *= variation;
-      if (py < -0.25) { px *= 0.82; pz *= 0.86; }
-      py = Math.round(py * 7) / 7 + 0.025 * Math.sin(i + seed);
-      position.setXYZ(i, px, py, pz);
-    }
-    geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = `watercut_rock_${seed}`;
-    mesh.position.set(x, y, z);
-    mesh.scale.set(sx, sy, sz);
-    mesh.rotation.set(0.03 * Math.sin(seed), seed * 0.37, 0.04 * Math.cos(seed));
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    root.add(mesh);
+  root.name = "shore_transition_c_closed_flooded_bank";
+  const material = (name,color,roughness) => { const m = new THREE.MeshStandardMaterial({color,roughness,metalness:0}); m.name=name; return m; };
+  const stone = material('stone',0x465b55,.62);
+  const wetStone = material('stone',0x263f3c,.48);
+  const ground = material('ground',0x253127,.76);
+  const moss = material('foliage',0x476a43,.67);
+  const timber = material('timber',0x30281d,.63);
+  const W=9.6, H=0.82, D=2.8, NX=19, NZ=11, SEED=89;
+  const island=false;
+  const variant="c";
+  const verts=[], indices=[], groups=[];
+  const top=[];
+  function height(x,z){
+    const u=x/(W*.5), v=z/(D*.5);
+    const radial=Math.max(0,1-Math.pow(Math.min(1,Math.hypot(u*(island?1:.72),v*(island?.92:1.2))),1.7));
+    const shoulder=Math.max(0,1-Math.abs(u));
+    const ridge=variant==='a' ? .16*Math.sin(u*5.4+SEED)+.1*Math.cos(v*6.1-SEED) : variant==='b' ? .12*Math.sin((u+v)*7.3)+.08*Math.cos(u*9.2) : .13*Math.cos(u*4.1-v*6.8)+.09*Math.sin(v*10.2);
+    const terrace=radial;
+    const form=island ? radial : (.18+.82*shoulder)*(0.42+.58*Math.max(0,1-(v*.78)*(v*.78)));
+    return Math.max(.10,H*(variant==='b' ? .18+.82*terrace : .16+.84*form)+ridge*H*.28);
   }
-
-  const xs = [-4.45, -3.72, -2.91, -2.05, -1.12, -0.18, 0.76, 1.68, 2.57, 3.38, 4.17];
-  xs.forEach((x, i) => rock(11 + i, x, 0.31, 0.08 + 0.22 * Math.sin(i * 1.37),
-    0.62 + 0.12 * (i % 3), 0.38 + 0.06 * (i % 2), 0.72 + 0.12 * ((i + 1) % 3), i % 3 === 0 ? wet : stone));
-  for (let i = 0; i < 8; i++) rock(40 + i, -3.92 + i * 1.12, 0.58, -0.55 + 0.1 * Math.sin(i), 0.67, 0.27 + 0.04 * (i % 2), 0.55, i % 4 === 1 ? moss : stone);
-  for (let i = 0; i < 15; i++) rock(80 + i, -4.48 + i * 0.64, 0.11, 0.74 + 0.14 * Math.sin(i * 2.2), 0.25 + 0.05 * (i % 3), 0.14, 0.27, wet);
-
-  normalize(root, THREE, [9.6, 0.82, 2.8]);
-  root.userData.staticBakeable = true;
-  root.userData.assetRole = "low_continuous_shore_transition";
-  root.userData.channelProjection = 0.95;
-  root.userData.materialFamilies = ["stone", "foliage"];
+  for(let iz=0;iz<NZ;iz++){ top[iz]=[]; for(let ix=0;ix<NX;ix++){
+    const x=-W/2+W*ix/(NX-1), z=-D/2+D*iz/(NZ-1);
+    const inset=(ix===0||ix===NX-1||iz===0||iz===NZ-1) ? .08*H : 0;
+    const y=Math.max(.08,height(x,z)-inset); top[iz][ix]=verts.length/3; verts.push(x,y,z);
+  }}
+  for(let iz=0;iz<NZ-1;iz++) for(let ix=0;ix<NX-1;ix++) { const a=top[iz][ix],b=top[iz][ix+1],c=top[iz+1][ix+1],d=top[iz+1][ix]; indices.push(a,d,b,b,d,c); }
+  const perimeter=[];
+  for(let ix=0;ix<NX;ix++) perimeter.push(top[0][ix]);
+  for(let iz=1;iz<NZ;iz++) perimeter.push(top[iz][NX-1]);
+  for(let ix=NX-2;ix>=0;ix--) perimeter.push(top[NZ-1][ix]);
+  for(let iz=NZ-2;iz>0;iz--) perimeter.push(top[iz][0]);
+  const bottom=[]; for(const ti of perimeter){bottom.push(verts.length/3); verts.push(verts[ti*3],0,verts[ti*3+2]);}
+  const center=verts.length/3; verts.push(0,0,0);
+  const sideStart=indices.length;
+  for(let i=0;i<perimeter.length;i++){const j=(i+1)%perimeter.length;indices.push(perimeter[i],bottom[i],perimeter[j],perimeter[j],bottom[i],bottom[j]);}
+  const bottomStart=indices.length;
+  for(let i=0;i<bottom.length;i++){const j=(i+1)%bottom.length;indices.push(center,bottom[j],bottom[i]);}
+  const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3)); geo.setIndex(indices); geo.computeVertexNormals();
+  geo.clearGroups(); geo.addGroup(0,sideStart,0); geo.addGroup(sideStart,bottomStart-sideStart,1); geo.addGroup(bottomStart,indices.length-bottomStart,2);
+  // One connected shell owns the entire silhouette. Surface detail is supplied
+  // by the game-side PBR recipes, never by detached decorative geometry.
+  const body=new THREE.Mesh(geo,[moss,wetStone,ground]); body.name='continuous_closed_bank_body'; body.castShadow=body.receiveShadow=true; root.add(body);
+  root.updateMatrixWorld(true); let bounds=new THREE.Box3().setFromObject(root), measured=bounds.getSize(new THREE.Vector3());
+  root.scale.set(W/measured.x,H/measured.y,D/measured.z); root.updateMatrixWorld(true);
+  bounds=new THREE.Box3().setFromObject(root); const centerXZ=bounds.getCenter(new THREE.Vector3());
+  root.position.set(-centerXZ.x,-bounds.min.y,-centerXZ.z); root.updateMatrixWorld(true);
+  root.userData.staticBakeable=true; root.userData.assetRole="shore_transition"; root.userData.closedGeometry=true; root.userData.materialFamilies=['stone','ground','foliage','timber'];
   return root;
-}
-
-function normalize(root, THREE, target) {
-  const box = new THREE.Box3();
-  const point = new THREE.Vector3();
-  const measure = () => {
-    box.makeEmpty();
-    root.updateMatrixWorld(true);
-    root.traverse((node) => {
-      const attribute = node.isMesh && node.geometry.getAttribute("position");
-      if (attribute) for (let i = 0; i < attribute.count; i++) box.expandByPoint(point.fromBufferAttribute(attribute, i).applyMatrix4(node.matrixWorld));
-    });
-  };
-  measure();
-  const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
-  const scale = new THREE.Vector3(target[0] / size.x, target[1] / size.y, target[2] / size.z);
-  root.children.forEach((node) => {
-    if (!node.isMesh) return;
-    node.updateMatrix();
-    node.geometry = node.geometry.clone();
-    node.geometry.applyMatrix4(node.matrix);
-    const attribute = node.geometry.getAttribute("position");
-    for (let i = 0; i < attribute.count; i++) {
-      attribute.setXYZ(i,
-        (attribute.getX(i) - center.x) * scale.x,
-        (attribute.getY(i) - box.min.y) * scale.y,
-        (attribute.getZ(i) - center.z) * scale.z);
-    }
-    attribute.needsUpdate = true;
-    node.geometry.computeVertexNormals();
-    node.position.set(0, 0, 0);
-    node.rotation.set(0, 0, 0);
-    node.quaternion.identity();
-    node.scale.set(1, 1, 1);
-    node.updateMatrix();
-  });
 }
