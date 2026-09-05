@@ -64,9 +64,15 @@ export const TRAVERSAL = Object.freeze([
   {
     id: "p1_rest",
     phrase: 1,
-    x: 2.05,
+    // Pull the whole authored leaf (visual mesh, water response and support)
+    // into the phone jump envelope. The old 4.72 m centre spacing repeatedly
+    // left touch players in open water about 0.38 m before the rim, while the
+    // same route only passed with keyboard timing. This preserves the leaf's
+    // silhouette and honest coupled collision instead of adding invisible
+    // reach to the support radius.
+    x: 1.75,
     y: 0.05,
-    z: -9.05,
+    z: -8.61,
     scale: 1.18,
     yaw: 1.14,
     radius: 1.36,
@@ -216,8 +222,24 @@ export const HUB_LINKS = Object.freeze([
   { id: "combat_shortcut", from: "west_rescue", to: "east_rescue", gated: true },
 ]);
 
+// Verifier-selected job 1453 bank body. Its long axis is rotated into the
+// arrival-to-west diagonal; collision uses the same local footprint so the
+// visible habitat, not invisible debug geometry, owns the playable route.
+export const ARRIVAL_HABITAT = Object.freeze({
+  asset: "./assets/arrival_habitat.js",
+  position: [-2.92, -0.48, -4.78],
+  yaw: -1.32,
+  scale: [1.46, 1.0, 2.08],
+  halfLength: 8.0,
+  halfWidth: 3.45,
+  top: 0.16,
+});
+
 export const ENEMY_SPAWNS = Object.freeze([
-  { id: "west_jaw", role: "melee", x: -4.7, z: -12.2, island: "west_rescue" },
+  // Keep the first melee silhouette in the island's open, water-backed lane.
+  // The old centre post coincided with the ecology shelf and rescue beacon,
+  // hiding most of the warden in the earned chase-camera strike frame.
+  { id: "west_jaw", role: "melee", x: -4.55, z: -13.35, island: "west_rescue", heroScale: 0.49 },
   { id: "pagoda_bomber", role: "ranged", x: 2.2, z: -23.0, island: "pagoda_isle" },
   { id: "east_jaw", role: "melee", x: 5.0, z: -33.0, island: "east_rescue" },
 ]);
@@ -363,12 +385,15 @@ export const DRESSING = Object.freeze([
     scale: [scale, scale * (0.88 + (index % 3) * 0.06), scale],
     rotation: [0, yaw, 0],
   })),
-  // Arrival framing: asymmetrical and close enough to break the frame edge.
+  // Arrival framing stays asymmetrical, but the left owner now lives outside
+  // the first landing aperture.  At the old positions its rock and bamboo
+  // merged into a single foreground wall behind p1_left, hiding both the pad
+  // waterline and every expanding contact history in the chase camera.
   {
     id: "arr_bank_l",
     chunk: "arrival",
     asset: "./assets/required/bank_rock_large_a.js",
-    position: [-8.35, -0.36, 2.1],
+    position: [-12.4, -0.56, 1.2],
     scale: [1, 1, 1],
     rotation: [0, 0.28, 0],
     waterFootprints: [
@@ -381,8 +406,8 @@ export const DRESSING = Object.freeze([
     id: "arr_bamboo_l",
     chunk: "arrival",
     asset: "./assets/bamboo_cluster.js",
-    position: [-7.05, -0.18, 0.8],
-    scale: [1.12, 1.12, 1.12],
+    position: [-13.2, -0.32, -0.15],
+    scale: [0.78, 0.78, 0.78],
     rotation: [0, 0.63, -0.035],
     waterFootprints: [
       { center: [0.15, 0.05], radii: [1.65, 1.05], yaw: 0.1, role: "reed" },
@@ -559,10 +584,10 @@ export const CAMERA_VOLUMES = Object.freeze([
     id: "arrival_establish",
     zFrom: 4.5,
     zTo: -8.5,
-    distance: 5.25,
-    height: 2.42,
-    fov: 50,
-    targetLift: 0.62,
+    distance: 4.55,
+    height: 2.18,
+    fov: 47,
+    targetLift: 0.58,
     lookAhead: 1.55,
     lateralBias: 0.0,
   },

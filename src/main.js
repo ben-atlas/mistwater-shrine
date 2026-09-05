@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { ASSET, bakeStatic } from "../assetlib.js";
 import { setSurfaceDefaults } from "../surfaces.js";
 import { createWaterSystem } from "./water-system.js";
+import { loadMossyWetStone, applyMossyWetStone, loadAgedRedLacquerTimber, applyAgedRedLacquerTimber, loadOxidizedRoofTileMetal, applyOxidizedRoofTileMetal, loadStainedWaterlineMasonry, applyStainedWaterlineMasonry } from "./patina-materials.js";
 import {
   createGuardianAnimation,
   GUARDIAN_ANIM_EVENT,
@@ -17,20 +19,41 @@ import {
   HUB_ISLANDS,
   HUB_LINKS,
   ENEMY_SPAWNS,
+  ARRIVAL_HABITAT,
 } from "./world-layout.js";
 
 setSurfaceDefaults({ on: true, size: 512, normalScale: 0.72 });
 const mobileMode = matchMedia("(pointer: coarse)").matches;
+// Query-only portrait composition study.  This deliberately stays out of the
+// production camera until the same earned touch route proves that the active
+// destination survives the narrow crop.  It changes only the chase volume;
+// movement, collision, combat and authored world placement are untouched.
+const portraitRouteCamera =
+  new URLSearchParams(location.search).get("portraitRouteCamera") === "north-v1" &&
+  innerHeight > innerWidth;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x91aaa2);
 scene.fog = new THREE.FogExp2(0x86a9a3, 0.025);
+const horizonFitParam = new URLSearchParams(location.search).get("horizonFit");
+const horizonFit = horizonFitParam === null
+  ? 0.63
+  : THREE.MathUtils.clamp(Number(horizonFitParam) || 0, 0, 1);
+// Keep the opening wet and enclosed without flattening the gate, reeds and
+// route into one cyan value plane. The URL switch preserves the previous
+// density for exact A/B captures and future critic rejection.
+const fogFitParam = new URLSearchParams(location.search).get("fogFit");
+const fogFit = fogFitParam === null
+  ? 1
+  : THREE.MathUtils.clamp(Number(fogFitParam) || 0, 0, 1);
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(175, 32, 18),
   new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     fog: false,
-    uniforms: {},
+    uniforms: {
+      uHorizonFit: { value: horizonFit },
+    },
     vertexShader: `
       varying vec3 vSkyDirection;
       void main() {
@@ -40,11 +63,20 @@ const sky = new THREE.Mesh(
     `,
     fragmentShader: `
       varying vec3 vSkyDirection;
+      uniform float uHorizonFit;
       void main() {
         float h = clamp(vSkyDirection.y * .5 + .5, 0.0, 1.0);
-        vec3 lower = vec3(.37, .49, .47);
-        vec3 horizon = vec3(.63, .72, .67);
-        vec3 upper = vec3(.31, .45, .45);
+        // These are linear-light values. The former horizon (.63/.72/.67)
+        // was effectively specified as display RGB and then passed through
+        // ACES a second time, producing the pale strip above the fogged far
+        // water. Fit the lower sky to the renderer's actual FogExp2 colour;
+        // keep a URL A/B switch so the visual gate can reject the change.
+        vec3 legacyLower = vec3(.37, .49, .47);
+        vec3 legacyHorizon = vec3(.63, .72, .67);
+        vec3 legacyUpper = vec3(.31, .45, .45);
+        vec3 lower = mix(legacyLower, vec3(.235, .365, .335), uHorizonFit);
+        vec3 horizon = mix(legacyHorizon, vec3(.285, .425, .385), uHorizonFit);
+        vec3 upper = mix(legacyUpper, vec3(.255, .405, .405), uHorizonFit);
         vec3 skyColor = mix(lower, horizon, smoothstep(.12, .48, h));
         skyColor = mix(skyColor, upper, smoothstep(.50, .94, h));
         vec3 dawnDirection = normalize(vec3(-.18, .14, -.97));
@@ -78,6 +110,15 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+const mossyWetStone = await loadMossyWetStone(renderer, mobileMode);
+const agedRedLacquer = await loadAgedRedLacquerTimber(renderer, mobileMode);
+const oxidizedRoof = await loadOxidizedRoofTileMetal(renderer, mobileMode);
+const stainedWaterline = await loadStainedWaterlineMasonry(renderer, mobileMode);
+const patinaEnabled = new URLSearchParams(location.search).get("patina") !== "0";
+let patinaMeshCount = 0;
+let lacquerMeshCount = 0;
+let oxidizedRoofMeshCount = 0;
+let waterlineMeshCount = 0;
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.045).texture;
 scene.environmentIntensity = 0.34;
@@ -158,17 +199,10 @@ for (const [x,y,z,sx,sy,opacity,phase] of [
   horizonGroup.add(cloud); cloudLayers.push(cloud);
 }
 
-function mountainLayer(z, color, opacity, peaks) {
-  const shape = new THREE.Shape(); shape.moveTo(-82,-7);
-  for (const [x,y] of peaks) shape.lineTo(x,y);
-  shape.lineTo(82,-7); shape.closePath();
-  const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({color,transparent:true,opacity,depthWrite:false,fog:true,side:THREE.DoubleSide}));
-  mesh.position.set(0,3,z); horizonGroup.add(mesh); return mesh;
-}
-const mountainLayers = [
-  mountainLayer(-112,0x78918c,.42,[[-82,0],[-64,12],[-51,5],[-36,21],[-20,7],[-2,17],[17,4],[36,20],[55,7],[70,14],[82,2]]),
-  mountainLayer(-94,0x526f69,.55,[[-82,-1],[-68,7],[-58,3],[-43,16],[-29,5],[-11,12],[5,3],[22,14],[39,4],[56,13],[70,5],[82,9]]),
-];
+// Goal 8 removes the former ShapeGeometry mountain cards. The verified 404
+// karst assets below own the distant silhouette; mist and cloud layers provide
+// value separation without putting flat graphic cut-outs behind them.
+const mountainLayers = [];
 
 const bambooSilhouettes = [];
 const bambooMaterial = new THREE.MeshBasicMaterial({color:0x173d37,transparent:true,opacity:.62,fog:true});
@@ -210,6 +244,55 @@ for (const [x,z,s,phase] of [[-27,-74,31,.4],[0,-80,39,2.2],[29,-73,32,4.1]]) {
   horizonGroup.add(band); horizonMist.push(band);
 }
 
+// Rust17 far-band rule: the haze needs a sparse middle silhouette to consume,
+// otherwise the fitted sky and extended lake still resolve as two horizontal
+// colour fields.  This is one merged, unlit, non-colliding mesh: broad drowned
+// hummocks establish an irregular waterline while bowed reed fans break it into
+// discrete vertical clusters.  It deliberately sits closer and larger than a
+// literal horizon prop so FogExp2 leaves a restrained readable remnant.
+const farMarshEnabled = new URLSearchParams(location.search).get("farMarsh") !== "0";
+const farMarshParts = [];
+const farMarshHummocks = [
+  [-30.0, -62.0, 7.4, 1.25, 3.0], [-21.5, -67.5, 5.8, .82, 2.5],
+  [-14.0, -61.5, 4.3, .72, 2.0], [-8.2, -69.0, 5.4, .94, 2.6],
+  [8.5, -68.5, 5.6, .88, 2.5], [15.5, -62.5, 4.7, .74, 2.1],
+  [23.0, -69.5, 6.2, 1.02, 2.7], [31.5, -63.0, 7.8, 1.18, 3.1],
+];
+for (const [x, z, sx, sy, sz] of farMarshHummocks) {
+  const geometry = new THREE.SphereGeometry(1, 9, 5, 0, Math.PI * 2, 0, Math.PI * .56);
+  geometry.scale(sx, sy, sz);
+  geometry.rotateY((x * .071 + z * .037) % .42);
+  geometry.translate(x, -.46, z);
+  farMarshParts.push(geometry);
+}
+const farMarshReeds = [
+  [-27.5,-61.0,3.7,-.12],[-25.7,-62.4,2.8,.08],[-23.9,-63.0,4.5,.16],
+  [-17.2,-65.5,3.2,-.1],[-15.8,-64.2,4.2,.12],[-10.7,-67.2,3.5,-.15],
+  [-7.8,-68.0,4.8,.09],[10.2,-67.1,4.1,-.1],[12.1,-66.0,3.0,.14],
+  [17.4,-63.0,4.5,.11],[20.8,-67.5,3.4,-.13],[24.2,-68.4,4.9,.08],
+  [27.0,-66.0,3.1,.15],[29.8,-62.1,4.2,-.09],
+];
+for (const [x, z, height, lean] of farMarshReeds) {
+  for (let strand = -1; strand <= 1; strand++) {
+    const h = height * (1 - Math.abs(strand) * .17);
+    const geometry = new THREE.CylinderGeometry(.055, .11, h, 5, 1, false);
+    geometry.rotateZ(lean + strand * .075);
+    geometry.translate(x + strand * .34, h * .5 - .2, z + Math.abs(strand) * .18);
+    farMarshParts.push(geometry);
+  }
+}
+const farMarshGeometry = mergeGeometries(farMarshParts, false);
+for (const geometry of farMarshParts) geometry.dispose();
+const farMarsh = new THREE.Mesh(
+  farMarshGeometry,
+  new THREE.MeshBasicMaterial({ color: 0x29483f, transparent: true, opacity: .82, fog: true }),
+);
+farMarsh.name = "FarMarshSilhouetteBand";
+farMarsh.visible = farMarshEnabled;
+farMarsh.frustumCulled = true;
+farMarsh.renderOrder = -2;
+horizonGroup.add(farMarsh);
+
 const contactMaterial = new THREE.MeshBasicMaterial({
   color: 0x071a18, transparent: true, opacity: .34, depthWrite: false,
   blending: THREE.MultiplyBlending,
@@ -219,12 +302,17 @@ function createContactShadow(radius = .62) {
   shadow.rotation.x = -Math.PI * .5; shadow.renderOrder = 3; scene.add(shadow);
   return shadow;
 }
+const horizonSkirtEnabled = new URLSearchParams(location.search).get("horizonSkirt") !== "0";
+// Query-only depth ownership plate for the rejected separated pagoda proxy.
+// Flat, unlit colours preserve the real depth buffer while making it
+// impossible to confuse water/reflection shading with baked bank geometry.
+const pagodaOwnerPalette = new URLSearchParams(location.search).has("pagodaOwnerPalette");
 const waterSystem = createWaterSystem({
   scene,
   width: 70,
-  length: 124,
+  length: horizonSkirtEnabled ? 220 : 124,
   segmentsX: mobileMode ? 72 : 112,
-  segmentsZ: mobileMode ? 112 : 160,
+  segmentsZ: horizonSkirtEnabled ? (mobileMode ? 200 : 284) : (mobileMode ? 112 : 160),
   y: 0,
   colors: {
     deep: 0x0c292c,
@@ -234,6 +322,18 @@ const waterSystem = createWaterSystem({
     sun: 0xf3cd8a,
   },
 });
+if (pagodaOwnerPalette) {
+  waterSystem.mesh.material = new THREE.MeshBasicMaterial({
+    color: 0x00b8ff,
+    fog: false,
+    side: THREE.DoubleSide,
+    depthWrite: true,
+  });
+}
+// Keep the near edge fixed at z=62 while carrying the existing single water
+// mesh deep enough into FogExp2 that its far boundary cannot draw a horizon
+// rule. This buys the skirt with no extra draw call or collision surface.
+if (horizonSkirtEnabled) waterSystem.mesh.position.z = -48;
 // Audit-only hook for deterministic contact-memory captures. Keeping this
 // behind an explicit query flag avoids expanding the normal runtime surface.
 if (new URLSearchParams(location.search).has("waterAudit")) {
@@ -257,18 +357,42 @@ scene.add(shrineMoon);
 
 const placements = [...TRAVERSAL, ...OPTIONAL_ROUTE];
 const pads = [];
+const openingLotusMode = new URLSearchParams(location.search).get("openingLotus") || "retain";
+// Query-only structural auditions deliberately replace every traversal leaf
+// so repetition, underside readability and route-scale cost can be judged in
+// the real scene without changing the production asset.
+const traversalLotusMode = new URLSearchParams(location.search).get("traversalLotus");
+const traversalLotusAssets = {
+  "radial-a": "./outputs/goal10-job1518/candidates/lotus_support_a_radial.js",
+  "cupped-a": "./outputs/goal10-job1520/candidates/lotus_support_a_cupped_shell.js",
+  "integral-wall": "./outputs/goal10-job1523/candidates/lotus_leaf_integral_wall.js",
+};
+const traversalLotusAsset = traversalLotusAssets[traversalLotusMode]
+  || "./assets/lotus_leaf_traversal.js";
 for (const placement of placements) {
-  const p = await ASSET("./assets/lotus_leaf_traversal.js", { height: 0.38 });
-  p.position.set(placement.x, placement.y, placement.z);
-  p.scale.setScalar(placement.scale);
+  const p = await ASSET(traversalLotusAsset, { height: 0.38 });
+  // Query-only coupled studies for the camera-near p1_center. Unlike the old
+  // `reduce` diagnostic, these values govern the visible leaf, landing centre,
+  // collision radius, top height and water response as one physical object.
+  // They can therefore be judged with real keyboard/touch traversal.
+  const coupledOpeningLotus = placement.id === "p1_center" && openingLotusMode.startsWith("coupled-");
+  const openingLotusScale = placement.id === "p1_center"
+    ? openingLotusMode === "reduce" ? 0.76
+      : openingLotusMode === "coupled-84" || openingLotusMode === "coupled-84-back" ? 0.84
+      : 1
+    : 1;
+  const openingLotusX = coupledOpeningLotus && openingLotusMode === "coupled-84-back" ? placement.x + 0.18 : placement.x;
+  const openingLotusZ = coupledOpeningLotus && openingLotusMode === "coupled-84-back" ? placement.z - 0.32 : placement.z;
+  p.position.set(openingLotusX, placement.y, openingLotusZ);
+  p.scale.setScalar(placement.scale * openingLotusScale);
   p.rotation.y = placement.yaw;
   scene.add(p);
   const pad = {
     mesh: p,
-    x: placement.x,
-    z: placement.z,
-    r: placement.radius * 1.1,
-    top: p.position.y + 0.38 * placement.scale,
+    x: openingLotusX,
+    z: openingLotusZ,
+    r: placement.radius * 1.1 * (coupledOpeningLotus ? openingLotusScale : 1),
+    top: p.position.y + 0.38 * placement.scale * (coupledOpeningLotus ? openingLotusScale : 1),
     route: placement,
   };
   pad.waterState = waterSystem.registerPad({
@@ -280,35 +404,522 @@ for (const placement of placements) {
 }
 
 // Broad authored landings turn the former forward-only pad course into a
-// flooded rescue hub. Uneven concentric discs give every island a distinct,
-// readable bank without touching the water shader or shoreline primitives.
+// flooded rescue hub. The cylinders below are collision-supporting cores only;
+// verified 404 shore anatomy wraps every focal edge so the visible silhouette
+// reads as rock/root/moss ownership instead of a pale polygon slab.
 const hubIslands = [];
-const islandStone = new THREE.MeshStandardMaterial({ color: 0x48665a, roughness: .92 });
-const islandMoss = new THREE.MeshStandardMaterial({ color: 0x66805f, roughness: 1 });
+const islandStone = new THREE.MeshStandardMaterial({ color: 0x263f38, roughness: .62 });
+const islandMoss = new THREE.MeshStandardMaterial({ color: 0x3f6045, roughness: .82 });
+// Query-only ownership diagnostic.  A bright unlit material is deliberately
+// applied before baking so the normal depth buffer, camera and occlusion still
+// decide which independent object actually owns each visible near-bank pixel.
+// With no `ownerProbe` parameter production materials are byte-for-byte the
+// same objects as before.
+const ownerProbe = new URLSearchParams(location.search).get("ownerProbe") || "0";
+// Query-only hub-bank topology audition. Render anatomy may be removed while
+// the cylinder support/collision core remains authoritative, so an A/B cannot
+// accidentally earn a route by changing gameplay geometry.
+const hubBankProbe = new URLSearchParams(location.search).get("hubBankProbe") || "0";
+const sectionalBankProbe = hubBankProbe === "sectional-u" || hubBankProbe.startsWith("sectional-u-");
+const terrainPatchProbe = hubBankProbe === "terrain-patch-v1";
+const pagodaHorseshoeProbe = hubBankProbe === "pagoda-horseshoe-v2";
+const pagodaBrokenBackBankProbe = hubBankProbe === "pagoda-broken-back-bank-v1";
+const pagodaDiagonalRearShelfProbe = hubBankProbe === "pagoda-diagonal-rear-shelf-v1";
+const pagodaPierSocketLedgeProbe = hubBankProbe === "pagoda-pier-socket-ledge-v1";
+const pagodaPierCollarLedgeProbe = hubBankProbe === "pagoda-pier-collar-ledge-v2";
+const pagodaAsymmetricUBankProbe = hubBankProbe === "pagoda-asymmetric-u-bank-v1";
+const pagodaTerracedUBankProbe = hubBankProbe === "pagoda-terraced-u-bank-v1";
+const pagodaRootboundUBankProbe = hubBankProbe === "pagoda-rootbound-u-bank-v1";
+const pagodaUBankProbe = pagodaAsymmetricUBankProbe || pagodaTerracedUBankProbe || pagodaRootboundUBankProbe;
+const pagodaWholeIslandProxy = hubBankProbe === "pagoda-whole-island-surface-proxy-v1";
+const pagodaAuthoredIslandSkin = hubBankProbe === "pagoda-authored-island-skin-v2";
+const pagodaMultilevelIslandSkin = hubBankProbe === "pagoda-multilevel-sectional-skin-v1";
+const pagodaVisibleArcMantle = hubBankProbe === "pagoda-visible-arc-mantle-v1";
+const pagodaBankAsset = sectionalBankProbe
+  ? "./assets/candidates/pagoda_bank_u_sectional_shelves.js"
+  : "./assets/west_pagoda_wet_bank.js";
+const pagodaLobeProbe = hubBankProbe === "pagoda-lobes-v1" || hubBankProbe === "pagoda-perimeter-v2";
+const pagodaPerimeterProbe = hubBankProbe === "pagoda-perimeter-v2";
+const ownerProbeMaterial = new THREE.MeshBasicMaterial({ color: 0xff2ad4 });
+const pagodaLobeMaterial = new THREE.MeshBasicMaterial({ color: 0xff2ad4, fog: false });
+const pagodaEcologyMaterial = new THREE.MeshBasicMaterial({ color: 0xffd400, fog: false });
+const markOwnerProbe = (object, owner) => {
+  if (ownerProbe !== owner) return;
+  object.traverse((child) => {
+    if (child.isMesh) child.material = ownerProbeMaterial;
+  });
+};
 for (const island of HUB_ISLANDS) {
   const group = new THREE.Group(); group.name = `HubIsland_${island.id}`;
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.08, .48, 14), islandStone);
-  base.scale.set(island.rx, 1, island.rz); base.position.y = island.y - .22; base.receiveShadow = true;
-  const crown = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.02, .12, 14), islandMoss);
-  crown.scale.set(island.rx * .94, 1, island.rz * .94); crown.position.y = island.y + .08; crown.receiveShadow = true;
-  group.add(base, crown); group.position.set(island.x, 0, island.z); scene.add(group);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.16, .58, 32), islandStone);
+  base.scale.set(island.rx * .86, 1, island.rz * .86); base.position.y = island.y - .31; base.receiveShadow = true;
+  // The coupled pagoda proxy changes rendering only. The group remains in
+  // hubIslands, so its unchanged ellipse continues to own support/collision.
+  // Hiding this synthetic cylinder is required before separated shoreline
+  // lobes can expose real water channels rather than a smooth disc beneath.
+  if ((pagodaLobeProbe && island.id === "pagoda_isle") ||
+      ((pagodaHorseshoeProbe || pagodaBrokenBackBankProbe || pagodaDiagonalRearShelfProbe || pagodaPierSocketLedgeProbe || pagodaPierCollarLedgeProbe || pagodaUBankProbe || pagodaWholeIslandProxy || pagodaAuthoredIslandSkin) && island.id === "pagoda_isle") ||
+      (terrainPatchProbe && (island.id === "west_rescue" || island.id === "pagoda_isle")) ||
+      (sectionalBankProbe && (island.id === "west_rescue" || island.id === "pagoda_isle"))) base.visible = false;
+  group.add(base); group.position.set(island.x, 0, island.z); scene.add(group);
+  markOwnerProbe(group, `hub-${island.id}`);
   hubIslands.push({ ...island, group, top: island.y + .14 });
+
+  const anatomy = new THREE.Group();
+  anatomy.name = `HubShoreAnatomy_${island.id}`;
+  const isWestEncounter = island.id === "west_rescue";
+  const isPagodaIsland = island.id === "pagoda_isle";
+  const usesContinuousBank = isWestEncounter || isPagodaIsland;
+  const organicCrown = await ASSET(usesContinuousBank
+    ? pagodaBankAsset
+    : "./assets/island_crown.js", { surfaces: true });
+  if (isWestEncounter) {
+    // One continuous, asymmetric mass replaces the crown plus four repeated
+    // edge strips in the focal west-to-pagoda view. The support core and all
+    // gameplay collision remain unchanged.
+    organicCrown.scale.set(.96, .84, .94);
+    organicCrown.position.y = island.y - .53;
+    organicCrown.rotation.y = -.08;
+  } else if (isPagodaIsland) {
+    // Reuse the verified continuous wet-bank grammar at the central landmark.
+    // Its long axis is compressed to the pagoda core, and the asymmetric low
+    // shoulders face the two rescue-loop arrivals. Collision/support remains
+    // the unchanged island core, so both west and east openings stay playable.
+    organicCrown.scale.set(1.08, .8, .78);
+    organicCrown.position.y = island.y - .51;
+    organicCrown.rotation.y = .1;
+  } else {
+    organicCrown.scale.set(island.rx / 6, .55, island.rz / 5);
+    organicCrown.position.y = island.y - .46;
+    organicCrown.rotation.y = (island.x * .19 + island.z * .07) % .38;
+  }
+  // Job 1565 camera-context compositions. The two authored sectional bodies
+  // stay complete, but no longer occupy the same depth slab. These query-only
+  // treatments alter render placement only; the unchanged hub ellipse remains
+  // the sole collision/support authority. The progressively narrower apron
+  // exposes water in front while the lifted rear crown carries the bank weight.
+  if (sectionalBankProbe) {
+    const sectionalMeshes = [];
+    organicCrown.traverse((child) => { if (child.isMesh) sectionalMeshes.push(child); });
+    // The canonical surface loader may flatten source names while preserving
+    // deterministic mesh order, so use that order only as a loader fallback.
+    const rear = organicCrown.getObjectByName("rear_faulted_crown") || sectionalMeshes[0];
+    const apron = organicCrown.getObjectByName("front_torn_apron") || sectionalMeshes[1];
+    const treatments = {
+      "sectional-u-a": { rear: [0, .24, -.30, .98, 1.12, .78, .04], apron: [0, 0, .32, .82, .92, .64, -.03] },
+      "sectional-u-b": { rear: [-.12, .34, -.42, .92, 1.22, .68, -.08], apron: [.16, 0, .43, .72, .86, .56, .06] },
+      "sectional-u-c": { rear: [.14, .28, -.50, 1.04, 1.18, .62, .11], apron: [-.18, 0, .48, .66, .82, .50, -.09] },
+    };
+    const treatment = treatments[hubBankProbe];
+    if (treatment && rear && apron) {
+      for (const [part, values] of [[rear, treatment.rear], [apron, treatment.apron]]) {
+        part.position.set(values[0], values[1], values[2]);
+        part.scale.set(values[3], values[4], values[5]);
+        part.rotation.y = values[6];
+      }
+    }
+  }
+  markOwnerProbe(organicCrown, `crown-${island.id}`);
+  if (hubBankProbe !== `remove-crown-${island.id}` && !(pagodaLobeProbe && isPagodaIsland) &&
+      !((pagodaHorseshoeProbe || pagodaBrokenBackBankProbe || pagodaDiagonalRearShelfProbe || pagodaPierSocketLedgeProbe || pagodaPierCollarLedgeProbe || pagodaUBankProbe || pagodaWholeIslandProxy || pagodaAuthoredIslandSkin || pagodaMultilevelIslandSkin) && isPagodaIsland) &&
+      !(terrainPatchProbe && (isWestEncounter || isPagodaIsland))) anatomy.add(organicCrown);
+  if (pagodaLobeProbe && isPagodaIsland) {
+    // Camera-scale topology probe only: three unequal verified organic-crown
+    // fragments occupy the perimeter while leaving open channels between the
+    // west arrival, east exit and southern return. A strict three-strategy
+    // 404 asset round is justified only if this coarse coupled silhouette wins.
+    // v1 accidentally made every source crown wider than the entire hub
+    // (12 m source width * 0.96--1.23), so its three nominal fragments
+    // overlapped into the measured field. v2 uses the same verified anatomy
+    // only as genuinely narrow, non-overlapping perimeter sections. Their
+    // plan-view AABBs leave metre-scale west, east and south water channels;
+    // the unchanged invisible ellipse remains the sole gameplay authority.
+    const lobeSpecs = pagodaPerimeterProbe ? [
+      [-3.48,  1.55, .29, .34, .24, -.58],
+      [-3.10, -1.68, .25, .31, .27,  .48],
+      [ 3.42,  1.46, .27, .33, .23,  .62],
+      [ 3.18, -1.62, .24, .30, .25, -.46],
+      [  .02,  3.18, .36, .35, .19,  .04],
+    ] : [
+      [-2.62, .05, 1.23, .32, .58, -.38],
+      [ 2.58, .03,  .96, .29, .52,  .47],
+      [ -.18,-2.35, 1.08, .27, .46, -.08],
+    ];
+    for (const [x, z, sx, sy, sz, yaw] of lobeSpecs) {
+      const lobe = await ASSET("./assets/island_crown.js", { surfaces: true });
+      lobe.scale.set(sx, sy, sz);
+      lobe.position.set(x, island.y - .42, z);
+      lobe.rotation.y = yaw;
+      if (pagodaOwnerPalette) {
+        lobe.traverse((child) => { if (child.isMesh) child.material = pagodaLobeMaterial; });
+      }
+      anatomy.add(lobe);
+    }
+  }
+  const edgeSpecs = [
+    [0, island.rz * .73, 0, island.rx * 2.05 / 9.6],
+    [0, -island.rz * .73, Math.PI, island.rx * 2.05 / 9.6],
+    [island.rx * .73, 0, -Math.PI * .5, island.rz * 2.05 / 9.6],
+    [-island.rx * .73, 0, Math.PI * .5, island.rz * 2.05 / 9.6],
+  ];
+  for (const [x, z, yaw, scale] of usesContinuousBank ? [] : edgeSpecs) {
+    const edge = await ASSET("./assets/shore_transition.js", {});
+    edge.position.set(x, island.y - .45, z);
+    edge.rotation.y = yaw;
+    edge.scale.setScalar(scale);
+    anatomy.add(edge);
+  }
+  const islandBamboo = await ASSET("./assets/bamboo_cluster.js", {});
+  const bambooScale = island.landmark ? .48 : .62;
+  islandBamboo.scale.setScalar(bambooScale);
+  islandBamboo.position.set(
+    isWestEncounter ? -island.rx * .74 : -island.rx * .55,
+    island.y - .02,
+    isWestEncounter ? island.rz * .34 : island.rz * .12,
+  );
+  islandBamboo.rotation.y = island.x * .37 + island.z * .11;
+  markOwnerProbe(islandBamboo, `bamboo-${island.id}`);
+  if (!(terrainPatchProbe && (isWestEncounter || isPagodaIsland)) && !((pagodaHorseshoeProbe || pagodaBrokenBackBankProbe || pagodaUBankProbe || pagodaWholeIslandProxy || pagodaAuthoredIslandSkin || pagodaMultilevelIslandSkin) && isPagodaIsland)) anatomy.add(islandBamboo);
+  // The verifier-selected Goal 8 ecology cluster supplies the missing middle
+  // scale between bamboo trunks and shoreline stones: cattail tips, bowed
+  // roots, mossed ruin fragments and a wet mud shelf. Alternate its side and
+  // yaw so it forms enclosure without becoming a repeated runway marker.
+  const ecology = await ASSET("./assets/wetland_ecology_cluster.js", { surfaces: true });
+  const ecologySide = island.x >= 0 ? -1 : 1;
+  ecology.scale.setScalar(island.landmark ? .72 : .86);
+  ecology.position.set(
+    isWestEncounter ? -island.rx * .68 : ecologySide * island.rx * .38,
+    island.y - .32,
+    isWestEncounter ? -island.rz * .58 : -island.rz * .34,
+  );
+  ecology.rotation.y = (island.x * .23 - island.z * .17) + (ecologySide < 0 ? Math.PI : 0);
+  if (pagodaOwnerPalette && isPagodaIsland) {
+    ecology.traverse((child) => { if (child.isMesh) child.material = pagodaEcologyMaterial; });
+  }
+  markOwnerProbe(ecology, `ecology-${island.id}`);
+  if (!(terrainPatchProbe && (isWestEncounter || isPagodaIsland)) && !((pagodaHorseshoeProbe || pagodaBrokenBackBankProbe || pagodaDiagonalRearShelfProbe || pagodaPierSocketLedgeProbe || pagodaPierCollarLedgeProbe || pagodaUBankProbe || pagodaWholeIslandProxy || pagodaAuthoredIslandSkin || pagodaMultilevelIslandSkin) && isPagodaIsland)) anatomy.add(ecology);
+  anatomy.position.set(island.x, 0, island.z);
+  const bakedAnatomy = bakeStatic(anatomy);
+  bakedAnatomy.name = anatomy.name;
+  scene.add(bakedAnatomy);
 }
 
-// Central landmark: a deliberately tall three-roof pagoda readable from both
-// loops. The open ground floor keeps movement around the hub unobstructed.
-const pagoda = new THREE.Group(); pagoda.name = "CentralRescuePagoda";
-const pagodaWood = new THREE.MeshStandardMaterial({ color: 0x532f27, roughness: .78 });
-const pagodaRoof = new THREE.MeshStandardMaterial({ color: 0x182f2b, roughness: .7 });
-for (const [x,z] of [[-1.25,-1.05],[1.25,-1.05],[-1.25,1.05],[1.25,1.05]]) {
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(.11,.14,4.9,7),pagodaWood); post.position.set(x,2.5,z); post.castShadow=true; pagoda.add(post);
+// Query-only structural gate: unlike prior portable bank candidates, this one
+// connected terrain topology is composed across both focal support footprints.
+// It deliberately stays clay-only until its silhouette passes both cameras.
+if (terrainPatchProbe) {
+  const terrainPatch = await ASSET("./assets/candidates/west_pagoda_continuous_terrain_patch.js", {});
+  terrainPatch.name = "WestPagodaContinuousTerrainPatchProbe";
+  terrainPatch.position.set(-2.4, -.02, -18.05);
+  scene.add(terrainPatch);
 }
-for (let tier=0;tier<3;tier++) {
-  const roof = new THREE.Mesh(new THREE.CylinderGeometry(.35,2.35-tier*.38,.48,4),pagodaRoof);
-  roof.position.y=2.0+tier*1.45; roof.rotation.y=Math.PI*.25; roof.scale.y=.55; roof.castShadow=true; pagoda.add(roof);
+if (pagodaHorseshoeProbe) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_horseshoe_terrain_patch.js", {});
+  terrainPatch.name = "PagodaHorseshoeTerrainPatchProbe";
+  // Undo the asset-contract centring so the authored horseshoe remains
+  // registered around the pagoda's world-space gameplay footprint.
+  const anchor = terrainPatch.userData.pagodaAnchorOffset || [1, 0];
+  terrainPatch.position.set(.2 + anchor[0], -.02, -23.4 + anchor[1]);
+  scene.add(terrainPatch);
 }
-const beacon = new THREE.PointLight(0xffb858,7.5,11,2); beacon.position.y=3.1; pagoda.add(beacon);
-pagoda.position.set(.2,.38,-23.4); scene.add(pagoda);
+if (pagodaBrokenBackBankProbe) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_broken_back_bank_patch.js", {});
+  terrainPatch.name = "PagodaBrokenBackBankPatchProbe";
+  const anchor = terrainPatch.userData.pagodaAnchorOffset || [0, 0];
+  terrainPatch.position.set(.2 + anchor[0], -.02, -23.4 + anchor[1]);
+  scene.add(terrainPatch);
+}
+if (pagodaDiagonalRearShelfProbe) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_diagonal_rear_shelf_patch.js", {});
+  terrainPatch.name = "PagodaDiagonalRearShelfPatchProbe";
+  const anchor = terrainPatch.userData.pagodaAnchorOffset || [0, 0];
+  terrainPatch.position.set(.2 + anchor[0], -.02, -23.4 + anchor[1]);
+  scene.add(terrainPatch);
+}
+if (pagodaPierSocketLedgeProbe) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_pier_socket_ledge_patch.js", {});
+  terrainPatch.name = "PagodaPierSocketLedgePatchProbe";
+  const anchor = terrainPatch.userData.pagodaAnchorOffset || [0, 0];
+  terrainPatch.position.set(.2 + anchor[0], -.02, -23.4 + anchor[1]);
+  scene.add(terrainPatch);
+}
+if (pagodaPierCollarLedgeProbe) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_pier_collar_ledge_patch.js", {});
+  terrainPatch.name = "PagodaPierCollarLedgePatchProbe";
+  const anchor = terrainPatch.userData.pagodaAnchorOffset || [0, 0];
+  terrainPatch.position.set(.2 + anchor[0], -.02, -23.4 + anchor[1]);
+  scene.add(terrainPatch);
+}
+if (pagodaUBankProbe) {
+  const bankAssets = {
+    "pagoda-asymmetric-u-bank-v1": "./assets/candidates/pagoda_asymmetric_u_bank_patch.js",
+    "pagoda-terraced-u-bank-v1": "./assets/candidates/pagoda_terraced_u_bank_patch.js",
+    "pagoda-rootbound-u-bank-v1": "./assets/candidates/pagoda_rootbound_u_bank_patch.js",
+  };
+  const terrainPatch = await ASSET(bankAssets[hubBankProbe], {});
+  terrainPatch.name = "PagodaAsymmetricUBankPatchProbe";
+  const anchor = terrainPatch.userData.pagodaAnchorOffset || [0, 0];
+  terrainPatch.position.set(.2 + anchor[0], -.02, -23.4 + anchor[1]);
+  if (pagodaOwnerPalette) terrainPatch.traverse((child) => {
+    if (child.isMesh) child.material = new THREE.MeshBasicMaterial({ color: 0xff3b8d, fog: false });
+  });
+  scene.add(terrainPatch);
+}
+if (pagodaWholeIslandProxy) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_whole_island_surface_proxy.js", {});
+  terrainPatch.name = "PagodaWholeIslandSurfaceProxy";
+  terrainPatch.position.set(.2, -.02, -23.4);
+  if (pagodaOwnerPalette) terrainPatch.traverse((child) => {
+    if (child.isMesh) child.material = new THREE.MeshBasicMaterial({ color: 0xff3b8d, fog: false });
+  });
+  scene.add(terrainPatch);
+}
+if (pagodaAuthoredIslandSkin) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_authored_perimeter_island_skin.js", {});
+  terrainPatch.name = "PagodaAuthoredPerimeterIslandSkin";
+  terrainPatch.position.set(.2, -.02, -23.4);
+  if (pagodaOwnerPalette) terrainPatch.traverse((child) => {
+    if (child.isMesh) child.material = new THREE.MeshBasicMaterial({ color: 0xff3b8d, fog: false });
+  });
+  scene.add(terrainPatch);
+}
+if (pagodaMultilevelIslandSkin) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_multilevel_sectional_island_skin.js", {});
+  terrainPatch.name = "PagodaMultilevelSectionalIslandSkin";
+  terrainPatch.position.set(.2, -.02, -23.4);
+  if (pagodaOwnerPalette) terrainPatch.traverse((child) => {
+    if (child.isMesh) child.material = new THREE.MeshBasicMaterial({ color: 0xff3b8d, fog: false });
+  });
+  scene.add(terrainPatch);
+}
+if (pagodaVisibleArcMantle) {
+  const terrainPatch = await ASSET("./assets/candidates/pagoda_visible_arc_mantle.js", {});
+  terrainPatch.name = "PagodaVisibleArcMantle";
+  const anchor = terrainPatch.userData.pagodaAnchorOffset || [0, 0];
+  terrainPatch.position.set(.2 + anchor[0], -.30, -23.4 + anchor[1]);
+  if (pagodaOwnerPalette) terrainPatch.traverse((child) => {
+    if (child.isMesh) child.material = new THREE.MeshBasicMaterial({ color: 0xff3b8d, fog: false });
+  });
+  scene.add(terrainPatch);
+}
+
+// The hub landmark must be a recognizable verified asset, not the earlier
+// cylinder/cone pagoda blockout. The wide opening preserves both rescue-loop
+// paths while the layered eaves provide an authored silhouette from approach.
+const pagoda = await ASSET("./assets/shrine_gate_hero.js", { surfaces: true });
+pagoda.name = "CentralRescueGate";
+if (patinaEnabled) patinaMeshCount += applyMossyWetStone(pagoda, mossyWetStone);
+if (patinaEnabled) lacquerMeshCount += applyAgedRedLacquerTimber(pagoda, agedRedLacquer);
+if (patinaEnabled) oxidizedRoofMeshCount += applyOxidizedRoofTileMetal(pagoda, oxidizedRoof);
+pagoda.scale.setScalar(.62);
+pagoda.position.set(.2, .38, -23.4);
+scene.add(pagoda);
+const beacon = new THREE.PointLight(0xffb04a, 8.5, 10, 2);
+beacon.position.set(.2, 3.05, -23.12);
+scene.add(beacon);
+
+// Keep the old arrival habitat available for deterministic visual A/B. The
+// replacement owns only render geometry; ARRIVAL_HABITAT's support/collision
+// footprint below remains the gameplay authority for both variants.
+const openingBankMode = new URLSearchParams(location.search).get("openingBank") || "0";
+const arrivalHabitat = await ASSET(
+  openingBankMode === "1"
+    ? "./outputs/goal10-job1472/rejected-opening-wet-bank.js"
+    : openingBankMode === "cut-a"
+      ? "./outputs/goal10-job1475/opening-cut-bank-a.js"
+    : openingBankMode === "cross-section-proxy"
+      ? "./outputs/goal10-job1483/arrival_habitat_cross_section.js"
+    : openingBankMode === "water-notch-proxy"
+      ? "./outputs/goal10-job1484/arrival_habitat_water_notch.js"
+    : openingBankMode === "closure-positive"
+      ? "./outputs/goal10-job1485/arrival_habitat_closure_positive.js"
+    : openingBankMode === "closure-negative"
+      ? "./outputs/goal10-job1485/arrival_habitat_closure_negative.js"
+    : openingBankMode === "cut-near-proxy"
+      ? "./outputs/goal10-job1487/arrival_habitat_cut_near.js"
+    : openingBankMode === "cut-far-proxy"
+      ? "./outputs/goal10-job1487/arrival_habitat_cut_far.js"
+    : openingBankMode === "cut-spine-proxy"
+      ? "./outputs/goal10-job1487/arrival_habitat_cut_spine.js"
+    : openingBankMode === "terrain-bites-1489" || openingBankMode.startsWith("place-")
+      ? "./outputs/goal10-job1489/arrival_habitat_terrain_bites.js"
+    : openingBankMode === "split-owner-1493"
+      ? "./outputs/goal10-job1493/arrival_habitat_split_proxy.js"
+    : openingBankMode === "crown-a-1490" || openingBankMode === "crown-b-1490" || openingBankMode === "volume-a-1491" || openingBankMode === "volume-b-1491"
+      ? "./outputs/goal10-job1489/arrival_habitat_terrain_bites.js"
+    : openingBankMode.startsWith("proxy-")
+      ? "./outputs/goal10-job1473/opening-bank-proxy.js"
+      : ARRIVAL_HABITAT.asset,
+  { surfaces: true },
+);
+markOwnerProbe(arrivalHabitat, "arrival-habitat");
+arrivalHabitat.position.set(...ARRIVAL_HABITAT.position);
+arrivalHabitat.scale.set(...ARRIVAL_HABITAT.scale);
+arrivalHabitat.rotation.y = ARRIVAL_HABITAT.yaw;
+// Job 1492 camera-space composition probes. These remain query-only and do
+// not move ARRIVAL_HABITAT's gameplay support/collision authority. The three
+// treatments test a lateral retreat, a rotation around the retained water
+// window, and a shorter split-owner silhouette before another asset round.
+if (openingBankMode === "place-retreat-1492") {
+  arrivalHabitat.position.x -= 1.65;
+  arrivalHabitat.position.z -= 0.45;
+} else if (openingBankMode === "place-rotate-1492") {
+  arrivalHabitat.position.x -= 0.8;
+  arrivalHabitat.position.z -= 0.35;
+  arrivalHabitat.rotation.y += 0.34;
+} else if (openingBankMode === "place-split-1492") {
+  arrivalHabitat.position.x -= 1.1;
+  arrivalHabitat.position.z -= 0.3;
+  arrivalHabitat.rotation.y += 0.18;
+  arrivalHabitat.scale.x *= 0.72;
+}
+// Goal 10 job 1494 negative-space diagnostic: hide only the authored arrival
+// habitat render body. The broad island support and all collision authorities
+// are created separately and remain unchanged, so this isolates whether the
+// foreground composition benefits from no bank owner at all.
+if (openingBankMode !== "hide-1494" && !openingBankMode.startsWith("anchor-1495-") && !openingBankMode.startsWith("anchor-1496-")) scene.add(bakeStatic(arrivalHabitat));
+// Job 1495: three independent, verified 404 vertical-anchor candidates. They
+// occupy only the far-left bank outside the lotus corridor and retain the
+// clean water aperture proven by hide-1494. Query-only until the matched-frame
+// gate selects one; support/collision remains unchanged in every variant.
+if (openingBankMode.startsWith("anchor-1495-")) {
+  const anchorKey = openingBankMode.slice("anchor-1495-".length);
+  const anchorAssets = {
+    a: "./outputs/goal10-job1495/candidates/opening_anchor_a_root_pine.js",
+    b: "./outputs/goal10-job1495/candidates/opening_anchor_b_bamboo_fan.js",
+    c: "./outputs/goal10-job1495/candidates/opening_anchor_c_lantern_reeds.js",
+  };
+  const openingAnchor = await ASSET(anchorAssets[anchorKey] || anchorAssets.a, { surfaces: true });
+  openingAnchor.name = `OpeningAnchor1495${anchorKey.toUpperCase()}`;
+  const transforms = {
+    a: { p: [-6.0, 0.12, -16.0], s: .78, r: .38 },
+    b: { p: [-6.05, 0.12, -16.05], s: .72, r: -.26 },
+    c: { p: [-6.02, 0.12, -16.02], s: .82, r: .18 },
+  };
+  const t = transforms[anchorKey] || transforms.a;
+  openingAnchor.position.set(...t.p); openingAnchor.scale.setScalar(t.s); openingAnchor.rotation.y = t.r;
+  scene.add(bakeStatic(openingAnchor));
+  if (anchorKey === "c") {
+    const anchorLanternLight = new THREE.PointLight(0xf2a447, 3.4, 5.5, 2);
+    anchorLanternLight.position.set(t.p[0], 3.55, t.p[2]); scene.add(anchorLanternLight);
+  }
+}
+// Job 1496: measured, query-only placement/scale grid for the strongest 1495
+// candidate. These mounts move progressively farther from the camera and
+// inward toward the readable left silhouette; no gameplay authority changes.
+if (openingBankMode.startsWith("anchor-1496-")) {
+  const gridKey = openingBankMode.slice("anchor-1496-".length);
+  const grid = {
+    a: { p: [-5.70, 0.10, -17.40], s: .88, r: .18 },
+    b: { p: [-5.15, 0.08, -18.25], s: .98, r: .12 },
+    c: { p: [-4.55, 0.06, -19.10], s: 1.08, r: .06 },
+  };
+  const t = grid[gridKey] || grid.a;
+  const openingAnchor = await ASSET("./outputs/goal10-job1495/candidates/opening_anchor_c_lantern_reeds.js", { surfaces: true });
+  openingAnchor.name = `OpeningAnchor1496${gridKey.toUpperCase()}`;
+  openingAnchor.position.set(...t.p); openingAnchor.scale.setScalar(t.s); openingAnchor.rotation.y = t.r;
+  scene.add(bakeStatic(openingAnchor));
+  const anchorLanternLight = new THREE.PointLight(0xf2a447, 3.6, 6.2, 2);
+  anchorLanternLight.position.set(t.p[0], t.p[1] + 3.47 * t.s, t.p[2]);
+  scene.add(anchorLanternLight);
+}
+// Candidate grafts are additive and reversible: the retained habitat still
+// owns the crown, support and collision. This narrow root/toe strip sits only
+// on the route-facing opening edge, leaving two water windows between clusters.
+if (openingBankMode === "graft-a") {
+  const openingToeGraft = await ASSET("./outputs/goal10-job1476/opening-wet-toe-graft-a.js", { surfaces: true });
+  openingToeGraft.name = "OpeningWetToeGraftA";
+  openingToeGraft.position.set(-3.62, -0.08, -6.7);
+  openingToeGraft.rotation.y = ARRIVAL_HABITAT.yaw;
+  openingToeGraft.scale.set(0.58, 0.62, 0.58);
+  scene.add(bakeStatic(openingToeGraft));
+}
+if (openingBankMode === "undercut-diag" || openingBankMode === "undercut-a") {
+  const openingUndercut = await ASSET("./outputs/goal10-job1477/opening-root-undercut.js", { surfaces: true });
+  openingUndercut.name = "OpeningRootUndercut";
+  // Camera-probed against the rendered route-facing edge (the render body's
+  // bevel/scale is taller than its deliberately conservative support plane).
+  // Root tips enter the water while their crowns remain under the visible lip.
+  openingUndercut.position.set(-1.82, -0.08, -5.28);
+  openingUndercut.rotation.y = ARRIVAL_HABITAT.yaw;
+  openingUndercut.scale.set(0.92, 0.82, 0.92);
+  scene.add(bakeStatic(openingUndercut));
+}
+if (openingBankMode === "attached-diag" || openingBankMode === "attached-a") {
+  const attachedUndercut = await ASSET("./outputs/goal10-job1478/opening-attached-undercut.js", { surfaces: true });
+  attachedUndercut.name = "OpeningAttachedUndercut";
+  attachedUndercut.position.set(-1.82, -0.08, -5.28);
+  attachedUndercut.rotation.y = ARRIVAL_HABITAT.yaw;
+  attachedUndercut.scale.set(0.92, 0.82, 0.92);
+  scene.add(bakeStatic(attachedUndercut));
+}
+if (openingBankMode === "ribbon-diag") {
+  const boundaryRibbon = await ASSET("./outputs/goal10-job1479/opening-boundary-ribbon.js", { surfaces: false });
+  boundaryRibbon.name = "OpeningBoundaryRibbonDiagnostic";
+  // Exact same object transform as the habitat: the ribbon vertices are
+  // sampled in the habitat's already-centred local coordinate system.
+  boundaryRibbon.position.set(...ARRIVAL_HABITAT.position);
+  boundaryRibbon.rotation.y = ARRIVAL_HABITAT.yaw;
+  boundaryRibbon.scale.set(...ARRIVAL_HABITAT.scale);
+  scene.add(boundaryRibbon);
+}
+if (openingBankMode === "vertices-diag") {
+  // Diagnostics intentionally bypass ASSET's per-module bounds normalisation:
+  // these points already inhabit the production asset's centred local frame,
+  // and normalising their smaller subset would move the thing being measured.
+  const { default: buildVertexLabels } = await import("../outputs/goal10-job1480/outline-vertex-labels.js");
+  const vertexLabels = buildVertexLabels(THREE);
+  vertexLabels.name = "ArrivalHabitatOutlineVertexLabels";
+  vertexLabels.position.set(...ARRIVAL_HABITAT.position);
+  vertexLabels.rotation.y = ARRIVAL_HABITAT.yaw;
+  vertexLabels.scale.set(...ARRIVAL_HABITAT.scale);
+  scene.add(vertexLabels);
+}
+if (openingBankMode === "visible-lip-diag") {
+  const { default: buildVisibleLipRibbon } = await import("../outputs/goal10-job1480/opening-visible-lip-ribbon.js");
+  const visibleLipRibbon = buildVisibleLipRibbon(THREE);
+  visibleLipRibbon.name = "OpeningVisibleLipRibbonDiagnostic";
+  visibleLipRibbon.position.set(...ARRIVAL_HABITAT.position);
+  visibleLipRibbon.rotation.y = ARRIVAL_HABITAT.yaw;
+  visibleLipRibbon.scale.set(...ARRIVAL_HABITAT.scale);
+  scene.add(visibleLipRibbon);
+}
+if (openingBankMode === "lip-a" || openingBankMode === "lip-a-selected" || openingBankMode.startsWith("lip-a-probe-")) {
+  // Camera candidate A is kept in the verified asset's centred coordinates,
+  // then mounted into the measured 13 -> 12 -> 11 habitat-local chain. The
+  // wrapper receives the habitat transform so non-uniform scale and yaw stay
+  // exactly coupled to the production bank.
+  const lipAsset = await ASSET("./outputs/goal10-job1481/candidate-a/opening_lip_undercut.js", { surfaces: true });
+  lipAsset.name = "OpeningMeasuredLipUndercutA";
+  const lipProbeOffsets = {
+    "lip-a-selected": [0, 0.16, 0],
+    "lip-a-probe-up": [0, 0.16, 0],
+    "lip-a-probe-out": [0, 0, -0.16],
+    "lip-a-probe-up-out": [0, 0.12, -0.12],
+  };
+  const [probeX, probeY, probeZ] = lipProbeOffsets[openingBankMode] || [0, 0, 0];
+  lipAsset.position.set(-3.65 + probeX, -0.21 + probeY, -1.025 + probeZ);
+  if (openingBankMode.startsWith("lip-a-probe-")) {
+    // Deliberately loud diagnostic material for the placement gate only. The
+    // selected offset must subsequently pass with the candidate's locked wet
+    // soil/root materials before it can be considered for production.
+    lipAsset.traverse((child) => {
+      if (!child.isMesh) return;
+      child.material = new THREE.MeshBasicMaterial({ color: 0xff2ad4 });
+    });
+  }
+  const lipMount = new THREE.Group();
+  lipMount.position.set(...ARRIVAL_HABITAT.position);
+  lipMount.rotation.y = ARRIVAL_HABITAT.yaw;
+  lipMount.scale.set(...ARRIVAL_HABITAT.scale);
+  lipMount.add(lipAsset);
+  scene.add(lipMount);
+}
+waterSystem.registerSceneFeature({
+  position: new THREE.Vector3(...ARRIVAL_HABITAT.position),
+  radius: ARRIVAL_HABITAT.halfLength,
+  type: "bank",
+});
 
 const availableDressing = [...DRESSING, ...BACKGROUND]
   .filter(
@@ -316,7 +927,10 @@ const availableDressing = [...DRESSING, ...BACKGROUND]
       (!item.asset.includes("/required/") &&
         !item.asset.includes("mountain_spire")) ||
       item.asset.includes("/required/bank_rock_") ||
-      item.asset.includes("/required/karst_"),
+      item.asset.includes("/required/karst_") ||
+      item.asset.includes("/required/reed_fern_cluster_") ||
+      item.asset.includes("/required/root_bank_arch_") ||
+      item.asset.includes("/required/shrine_vine_dressing_"),
   )
   .map((item) => ({
     ...item,
@@ -328,8 +942,12 @@ const availableDressing = [...DRESSING, ...BACKGROUND]
           : "./assets/bank_rock_large.js"
       : item.asset.includes("/required/karst_massif_")
         ? "./assets/karst_massif_a.js"
-        : item.asset.includes("/required/karst_arch_")
+      : item.asset.includes("/required/karst_arch_")
           ? "./assets/karst_arch_b.js"
+          : item.asset.includes("/required/reed_fern_cluster_") ||
+              item.asset.includes("/required/root_bank_arch_") ||
+              item.asset.includes("/required/shrine_vine_dressing_")
+            ? "./assets/wetland_ecology_cluster.js"
           : item.asset,
   }));
 // Register the actual authored world transforms with the water shader before
@@ -376,9 +994,28 @@ const dressingGroups = new Map();
 const dressingBakes = [];
 for (const item of availableDressing) {
   const object = await ASSET(item.asset, {});
+  markOwnerProbe(object, item.id);
   object.position.set(...item.position);
   object.scale.set(...item.scale);
   object.rotation.set(...item.rotation);
+  // The right arch sits closer than the other far forms and formerly retained
+  // a near-field pale stone value after fog. Pull its albedo/contrast into the
+  // same aerial-perspective family without changing its authored silhouette.
+  if (item.id === "karst_right") {
+    object.traverse((child) => {
+      if (!child.isMesh || !child.material) return;
+      const materialWasArray = Array.isArray(child.material);
+      const materials = materialWasArray ? child.material : [child.material];
+      const mutedMaterials = materials.map((material) => {
+        const muted = material.clone();
+        if (muted.color) muted.color.multiply(new THREE.Color(0x78918a));
+        muted.roughness = Math.max(.78, muted.roughness ?? 0);
+        return muted;
+      });
+      child.material = materialWasArray ? mutedMaterials : mutedMaterials[0];
+    });
+  }
+  if (patinaEnabled && item.id.startsWith("basin_edge_")) waterlineMeshCount += applyStainedWaterlineMasonry(object, stainedWaterline);
   let group = dressingGroups.get(item.chunk);
   if (!group) {
     group = new THREE.Group();
@@ -409,6 +1046,9 @@ for (const item of LANDMARKS) {
   object.position.set(...item.position);
   object.scale.set(...item.scale);
   object.rotation.set(...item.rotation);
+  if (patinaEnabled && (item.id === "shrine_footing" || item.id === "shrine_landing")) {
+    patinaMeshCount += applyMossyWetStone(object, mossyWetStone);
+  }
   if (item.chunk === "shrine_reveal") {
     // The green tunnel is a complete near-field occluder at the start. Keep
     // terminal landmarks out of the render list until the authored reveal,
@@ -470,28 +1110,27 @@ const heroContactShadow = createContactShadow(.58);
 const joints = hero.userData.joints || {};
 const guardianAnimation = createGuardianAnimation(joints);
 
-// Checkpoint 2 combat is deliberately built from low-poly primitives so the
-// two crocodile roles read clearly without adding another asset dependency.
-const enemyBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x315b43, roughness: 0.82 });
-const enemyBellyMaterial = new THREE.MeshStandardMaterial({ color: 0x8da56e, roughness: 0.9 });
 const warningMaterial = new THREE.MeshBasicMaterial({ color: 0xff7b3d, transparent: true, opacity: 0.62, depthWrite: false });
 const enemies = [];
-function createCrocodile(role, x, z) {
-  const root = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.42, 1.55), enemyBodyMaterial);
-  body.position.y = 0.36; body.castShadow = true;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.3, 0.72), enemyBellyMaterial);
-  head.position.set(0, 0.37, -0.96); head.castShadow = true;
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.31, 1.35, 5), enemyBodyMaterial);
-  tail.rotation.x = Math.PI * 0.5; tail.position.set(0, 0.35, 1.25);
+async function createCrocodile(role, x, z, heroScale = .43) {
+  // Animated actors are loaded independently with hierarchy intact. Never clone
+  // or bake them: either shortcut silently loses the authored joint ownership.
+  const root = await ASSET("./assets/marsh_warden.js", {
+    surfaces: true,
+    keepHierarchy: true,
+  });
+  root.scale.setScalar(heroScale);
+  const joints = root.userData.joints || {};
+  const tailJoints = Array.from({ length: 7 }, (_, i) => root.getObjectByName(`tail_${i}`)).filter(Boolean);
   const roleMark = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.045, 6, 18), new THREE.MeshBasicMaterial({ color: role === "ranged" ? 0xffa13d : 0xef4e42 }));
-  roleMark.rotation.x = Math.PI * 0.5; roleMark.position.y = 0.72;
-  root.add(body, head, tail, roleMark); root.position.set(x, 0.22, z); scene.add(root);
+  roleMark.rotation.x = Math.PI * 0.5; roleMark.position.y = 1.18;
+  roleMark.scale.setScalar(1 / heroScale);
+  root.add(roleMark); root.position.set(x, 0.22, z); scene.add(root);
   const contactShadow = createContactShadow(.72);
-  const enemy = { role, root, contactShadow, hp: role === "ranged" ? 2 : 3, maxHp: role === "ranged" ? 2 : 3, cooldown: role === "ranged" ? 1.4 : 0.55, windup: 0, stagger: 0, flash: 0, alive: true, roleMark };
+  const enemy = { role, root, joints, tailJoints, contactShadow, hp: role === "ranged" ? 2 : 3, maxHp: role === "ranged" ? 2 : 3, cooldown: role === "ranged" ? 1.4 : 0.55, windup: 0, stagger: 0, flash: 0, alive: true, roleMark };
   enemies.push(enemy); return enemy;
 }
-for (const spawn of ENEMY_SPAWNS) createCrocodile(spawn.role, spawn.x, spawn.z);
+for (const spawn of ENEMY_SPAWNS) await createCrocodile(spawn.role, spawn.x, spawn.z, spawn.heroScale);
 const bombs = [];
 const bombGeometry = new THREE.IcosahedronGeometry(0.22, 1);
 const bombMaterial = new THREE.MeshStandardMaterial({ color: 0x382b22, emissive: 0xff5426, emissiveIntensity: 0.8 });
@@ -556,6 +1195,21 @@ for (const island of hubIslands.filter((candidate) => candidate.rescue)) {
   halo.rotation.x = Math.PI * 0.5;
   halo.scale.y = 0.72;
   spark.add(core, halo);
+  // A beacon must light the island that carries it, not read as an emissive
+  // icon pasted over an unrelated surface. Keep the three practicals short-
+  // range so their warm pools separate from the cool environmental fill and
+  // do not flatten the wider rescue hub. The audit toggle gives every visual
+  // review a literal same-camera A/B, as required by the Rust17 polish gate.
+  if (new URLSearchParams(location.search).get("rescueLights") !== "0") {
+    const practical = new THREE.PointLight(
+      0xffa94f,
+      mobileMode ? 2.8 : 3.6,
+      mobileMode ? 3.8 : 4.6,
+      2,
+    );
+    practical.position.y = 0.12;
+    spark.add(practical);
+  }
   spark.position.set(island.x, island.top + .9, island.z);
   spark.userData.rescue = island.rescue;
   spark.userData.halo = halo;
@@ -640,6 +1294,28 @@ function releaseTouch(e) {
 renderer.domElement.addEventListener("pointerup", releaseTouch);
 renderer.domElement.addEventListener("pointercancel", releaseTouch);
 document.getElementById("jump").onclick = jump;
+// Touch players must be able to finish the rescue, not merely traverse it.
+// Keep this on the same combat path as keyboard input so cooldown, hit stop,
+// enemy stagger and victory requirements cannot drift between controllers.
+document.getElementById("strike").onclick = strike;
+const guardButton = document.getElementById("guard");
+const setTouchGuard = (held) => {
+  keys.KeyK = held;
+  guardButton.classList.toggle("is-held", held);
+  if (held && moveSpeed > 0.35 && dodgeTime <= 0) {
+    dodgeTime = .38;
+    invulnerable = .44;
+    combatStatus.textContent = "MIST STEP";
+  }
+};
+guardButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  guardButton.setPointerCapture(event.pointerId);
+  setTouchGuard(true);
+});
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+  guardButton.addEventListener(type, () => setTouchGuard(false));
+}
 let playing = false,
   won = false,
   vy = 0,
@@ -651,12 +1327,16 @@ let playing = false,
   airJumps = 0,
   fallStartedAt = 0,
   resetCount = 0,
+  resetHistory = [],
   pendingDoubleJump = false,
   checkpointPad = { x: HUB_ISLANDS[0].x, z: HUB_ISLANDS[0].z, top: hubIslands[0].top, waterState: { offset: 0 } },
   cameraImpact = 0;
 const deterministicCapture = new URLSearchParams(location.search).has(
   "deterministicCapture",
 );
+const heroReflectionEnabled = new URLSearchParams(location.search).get(
+  "heroReflection",
+) !== "0";
 const FIXED_CAPTURE_DT_MS = 1000 / 60;
 let captureNow = 0;
 const gameNow = () =>
@@ -673,6 +1353,18 @@ document.getElementById("again").onclick = () => location.reload();
 window.__START__ = () => document.getElementById("begin").click();
 const routeHint = document.getElementById("route-hint");
 window.__READY__ = true;
+window.__PATINA__ = {
+  enabled: patinaEnabled,
+  set: "mossy-wet-stone",
+  meshes: patinaMeshCount,
+  resolution: 512,
+  textureCount: 5,
+  sets: ["mossy-wet-stone", "aged-red-lacquer-timber", "oxidized-roof-tile-metal", "stained-waterline-masonry"],
+  lacquerMeshes: lacquerMeshCount,
+  oxidizedRoofMeshes: oxidizedRoofMeshCount,
+  waterlineMeshes: waterlineMeshCount,
+  totalTextureCount: 28,
+};
 let prev = performance.now(),
   frames = 0,
   fps = 60,
@@ -700,9 +1392,38 @@ camera.lookAt(
 );
 const shrineLanding = LANDMARKS.find((item) => item.id === "shrine_landing");
 const shrineCollision = shrineLanding.collision;
+// Goal 10 diagnostic: the earned route still shows the central gate crossing
+// the hero on both portrait and landscape. Keep this query-only until matched
+// full-route evidence proves that treating the verified gate as a camera
+// obstacle improves composition without collapsing the follow distance.
+const pagodaCameraCollision = new URLSearchParams(location.search).get("pagodaCameraCollision") === "1";
+// Query-only alternative to binary camera collision.  Near the gate's open
+// south-west landing it moves the chase rig onto a shallow east shoulder and
+// adds a small yaw, keeping the authored ray length instead of pushing the
+// camera into the hero.  Full earned routes decide whether this is promotable.
+const pagodaCameraVolume = new URLSearchParams(location.search).get("pagodaCameraVolume") || "0";
+// Query-only portrait passage composed with north-v1.  At the pagoda centre the
+// ordinary trailing camera sits beneath the broad south eave, so the roof cuts
+// the hero off from both the gate opening and the onward plane.  Ease the eye
+// upward and forward across that roof only while the hero is inside the pagoda
+// footprint; architecture stays visible and no render/collision owner changes.
+const pagodaCameraPassage =
+  new URLSearchParams(location.search).get("pagodaCameraPassage") === "over-eave-v1" &&
+  portraitRouteCamera;
+// Query-only, direction-aware successor to the rejected fixed passage.  The
+// camera stays on the approach side until the hero has crossed the pagoda
+// opening, then hands off over the eave to the departure side.  Direction is
+// latched outside the opening so small combat/landing reversals cannot flip the
+// composition while the roof is near the lens.
+const pagodaDirectionalPassage =
+  new URLSearchParams(location.search).get("pagodaCameraPassage") === "directional-v1" &&
+  portraitRouteCamera;
+let pagodaTravelDirection = -1;
+let pagodaHandoff = 0;
 const cameraObstacles = [
   ...dressingBakes,
   ...shrineRevealLandmarks,
+  ...(pagodaCameraCollision ? [pagoda] : []),
 ];
 function animate(now) {
   if (!deterministicCapture) requestAnimationFrame(animate);
@@ -788,15 +1509,22 @@ function animate(now) {
     }
     vy -= 11 * dt;
     hero.position.y += vy * dt;
+    // Takeoff anticipation can carry the visual/physical root briefly below
+    // the water threshold before the animation emits LAUNCH. Once a real
+    // upward launch exists, any timer armed by that dip is stale; otherwise a
+    // valid long phone jump is respawned in midair ~700 ms later.
+    if (vy > 0.2) fallStartedAt = 0;
     let floor = -0.55;
     let landingPad = null;
     let landingIsland = null;
+    let hasSafeSupport = false;
     for (const p of pads) {
       if (Math.hypot(hero.position.x - p.x, hero.position.z - p.z) < p.r) {
         const surface = p.top + p.waterState.offset;
         if (vy <= 0 && surface > floor) {
           floor = surface;
           landingPad = p;
+          hasSafeSupport = true;
         }
       }
     }
@@ -807,7 +1535,24 @@ function animate(now) {
         floor = island.top;
         landingIsland = island;
         landingPad = null;
+        hasSafeSupport = true;
       }
+    }
+    const habitatDx = hero.position.x - ARRIVAL_HABITAT.position[0];
+    const habitatDz = hero.position.z - ARRIVAL_HABITAT.position[2];
+    const habitatCos = Math.cos(ARRIVAL_HABITAT.yaw);
+    const habitatSin = Math.sin(ARRIVAL_HABITAT.yaw);
+    const habitatLocalX = habitatDx * habitatCos - habitatDz * habitatSin;
+    const habitatLocalZ = habitatDx * habitatSin + habitatDz * habitatCos;
+    if (
+      !landingPad &&
+      Math.abs(habitatLocalX) < ARRIVAL_HABITAT.halfLength &&
+      Math.abs(habitatLocalZ) < ARRIVAL_HABITAT.halfWidth &&
+      vy <= 0 && ARRIVAL_HABITAT.top > floor
+    ) {
+      floor = ARRIVAL_HABITAT.top;
+      landingPad = null;
+      hasSafeSupport = true;
     }
     const shrineHalfWidth = shrineCollision.size[0] * 0.5;
     const shrineHalfDepth = shrineCollision.size[2] * 0.5;
@@ -817,6 +1562,7 @@ function animate(now) {
     ) {
       floor = Math.max(floor, shrineLanding.position[1] + 1.1);
       landingPad = null;
+      hasSafeSupport = true;
     }
     if (hero.position.y <= floor) {
       if (!onGround && vy < -0.8) {
@@ -848,6 +1594,10 @@ function animate(now) {
       lastGroundedAt = now;
       if (landingPad?.route.rest) checkpointPad = landingPad;
       if (landingIsland?.checkpoint) checkpointPad = { ...landingIsland, waterState: { offset: 0 } };
+      // A low water dip may arm the delayed recovery timer immediately before
+      // an edge landing. Once geometry has actually supported the hero, that
+      // pending fall is no longer valid and must not reset a grounded player.
+      if (hasSafeSupport) fallStartedAt = 0;
     } else onGround = false;
     if (hero.position.y < 0.04 && !fallStartedAt) {
       fallStartedAt = now;
@@ -860,6 +1610,20 @@ function animate(now) {
       });
     }
     if (fallStartedAt && now - fallStartedAt > 700) {
+      // Keep a small deterministic audit trail in the harness state. This is
+      // deliberately gameplay-owned rather than inferred by the route driver:
+      // intermittent phone failures otherwise reveal only the later respawn.
+      resetHistory.push({
+        at: now,
+        fallMs: now - fallStartedAt,
+        from: [hero.position.x, hero.position.y, hero.position.z],
+        checkpoint: [
+          checkpointPad.x,
+          checkpointPad.top + checkpointPad.waterState.offset,
+          checkpointPad.z,
+        ],
+      });
+      if (resetHistory.length > 8) resetHistory.shift();
       hero.position.set(
         checkpointPad.x,
         checkpointPad.top + checkpointPad.waterState.offset,
@@ -920,6 +1684,11 @@ function animate(now) {
       enemy.roleMark.scale.setScalar(enemy.flash > 0 ? 1.7 : 1 + Math.sin(t * 4 + enemy.root.id) * .08);
       const toHero = hero.position.clone().sub(enemy.root.position); toHero.y = 0;
       const distance = toHero.length(); enemy.root.rotation.y = Math.atan2(toHero.x, toHero.z) + Math.PI;
+      const gait = Math.min(1, distance / 2.4);
+      if (enemy.joints.head) enemy.joints.head.rotation.x = Math.sin(t * 2.2 + enemy.root.id) * .045 + (enemy.windup > 0 ? -.14 : 0);
+      enemy.tailJoints.forEach((joint, index) => {
+        joint.rotation.y = Math.sin(t * (2.8 + gait) - index * .58 + enemy.root.id) * (.035 + index * .012);
+      });
       if (enemy.stagger > 0 || hero.position.z > -12 || hero.position.z < -35) continue;
       if (enemy.role === "melee") {
         if (enemy.windup > 0) {
@@ -952,6 +1721,15 @@ function animate(now) {
   heroContactShadow.position.set(hero.position.x, .042, hero.position.z);
   heroContactShadow.scale.setScalar(THREE.MathUtils.clamp(1.18 - heroShadowHeight * .13, .48, 1));
   heroContactShadow.material.opacity = THREE.MathUtils.clamp(.38 - heroShadowHeight * .055, .08, .34);
+  // A water-level receiver becomes a detached oval when it draws over a
+  // traversal leaf. Let the leaf's real shadow-map, authored dip/tilt/squash,
+  // splash crown and broken water histories own that contact instead. Keep
+  // the receiver only over open water and solid banks where it has a surface
+  // to darken. The old query flag remains accepted for capture compatibility.
+  const shadowPad = pads.find((pad) =>
+    Math.hypot(hero.position.x - pad.x, hero.position.z - pad.z) < pad.r * 1.08
+  );
+  heroContactShadow.visible = !shadowPad;
   for (const enemy of enemies) {
     enemy.contactShadow.visible = enemy.alive;
     enemy.contactShadow.position.set(enemy.root.position.x, .044, enemy.root.position.z);
@@ -978,7 +1756,11 @@ function animate(now) {
   for (let i = 0; i < lanternPools.length; i++) {
     lanternPools[i].material.opacity = .095 + Math.sin(t * 2.2 + i * 1.7) * .018;
   }
-  waterSystem.setHeroReflection(hero.position, hero.rotation.y, hero.visible);
+  waterSystem.setHeroReflection(
+    hero.position,
+    hero.rotation.y,
+    hero.visible && heroReflectionEnabled,
+  );
   waterSystem.update(dt, t);
   const shrineRevealed = hero.position.z < -15;
   for (const landmark of shrineRevealLandmarks) {
@@ -1014,13 +1796,37 @@ function animate(now) {
     }
   }
   cameraImpact = THREE.MathUtils.damp(cameraImpact, 0, 8.5, dt);
-  const cameraVolume =
+  const baseCameraVolume =
     CAMERA_VOLUMES.find(
       (volume) =>
         hero.position.z <= volume.zFrom && hero.position.z >= volume.zTo,
     ) ?? CAMERA_VOLUMES[CAMERA_VOLUMES.length - 1];
-  const targetFogDensity =
+  // Portrait loses most of the horizontal relationship between the hero and
+  // the next island.  Buy that relationship back with a modestly longer and
+  // higher rig plus a route-axis (-Z / northward) look-ahead.  Keep the hero's
+  // authored target lift change small so this remains a chase camera, not an
+  // overhead map view.
+  const portraitRouteWeight = portraitRouteCamera
+    ? THREE.MathUtils.smoothstep(-7.0, -15.0, hero.position.z)
+    : 0;
+  const cameraVolume = portraitRouteWeight > 0
+    ? {
+        ...baseCameraVolume,
+        distance: baseCameraVolume.distance + 0.72 * portraitRouteWeight,
+        height: baseCameraVolume.height + 0.42 * portraitRouteWeight,
+        targetLift: baseCameraVolume.targetLift + 0.24 * portraitRouteWeight,
+        lookAhead: baseCameraVolume.lookAhead + 1.85 * portraitRouteWeight,
+      }
+    : baseCameraVolume;
+  const legacyFogDensity =
     hero.position.z > -18 ? 0.029 : hero.position.z > -29 ? 0.023 : 0.0155;
+  const fittedFogDensity =
+    hero.position.z > -18 ? 0.0255 : hero.position.z > -29 ? 0.021 : 0.0155;
+  const targetFogDensity = THREE.MathUtils.lerp(
+    legacyFogDensity,
+    fittedFogDensity,
+    fogFit,
+  );
   scene.fog.density = THREE.MathUtils.damp(
     scene.fog.density,
     targetFogDensity,
@@ -1034,19 +1840,48 @@ function animate(now) {
     orbitYawTarget = THREE.MathUtils.damp(orbitYawTarget, 0, 0.82, dt);
   }
   orbitYaw = THREE.MathUtils.damp(orbitYaw, orbitYawTarget, 8.5, dt);
-  const orbitSin = Math.sin(orbitYaw);
-  const orbitCos = Math.cos(orbitYaw);
+  const pagodaDx = hero.position.x + 1.55;
+  const pagodaDz = hero.position.z + 20.35;
+  const pagodaProximity = pagodaCameraVolume === "sw-shoulder"
+    ? THREE.MathUtils.smoothstep(1 - Math.hypot(pagodaDx / 4.8, pagodaDz / 6.2), 0, 1)
+    : 0;
+  const pagodaPassageWeight = pagodaCameraPassage
+    ? THREE.MathUtils.smoothstep(1 - Math.hypot((hero.position.x - 0.2) / 4.0, (hero.position.z + 23.4) / 4.4), 0, 1)
+    : 0;
+  const pagodaLocalZ = hero.position.z + 23.4;
+  const pagodaDirectionZone = Math.abs(pagodaLocalZ) < 7.2 && Math.abs(hero.position.x - 0.2) < 5.2;
+  if (pagodaDirectionalPassage && pagodaDirectionZone && Math.abs(moveVelocity.y) > 0.55) {
+    pagodaTravelDirection = moveVelocity.y < 0 ? -1 : 1;
+  }
+  // Northbound crosses from 0 -> 1 after the north opening; southbound makes
+  // the exact reverse handoff.  The damped state is intentionally slower than
+  // one jump, eliminating a hard camera cut at either threshold.
+  const directionalHandoffTarget = pagodaDirectionalPassage && pagodaDirectionZone
+    ? (pagodaTravelDirection < 0
+        ? 1 - THREE.MathUtils.smoothstep(pagodaLocalZ, -4.6, -1.4)
+        : THREE.MathUtils.smoothstep(1.4, 4.6, pagodaLocalZ))
+    : 0;
+  pagodaHandoff = THREE.MathUtils.damp(pagodaHandoff, directionalHandoffTarget, 2.2, dt);
+  const directionalPassageWeight = pagodaDirectionalPassage && pagodaDirectionZone
+    ? THREE.MathUtils.smoothstep(1 - Math.abs(pagodaLocalZ) / 6.4, 0, 1)
+    : 0;
+  const departureSide = pagodaTravelDirection < 0 ? -1 : 1;
+  const directionalSide = departureSide * pagodaHandoff;
+  const composedYaw = orbitYaw - pagodaProximity * 0.105;
+  const composedLateralBias = cameraVolume.lateralBias + pagodaProximity * 1.15;
+  const orbitSin = Math.sin(composedYaw);
+  const orbitCos = Math.cos(composedYaw);
   const speedRatio = THREE.MathUtils.clamp(moveSpeed / 5.2, 0, 1);
-  const lookAhead = cameraVolume.lookAhead + speedRatio * 2.4;
+  const lookAhead = cameraVolume.lookAhead + speedRatio * 2.4 - pagodaPassageWeight * 3.2;
   cameraLookTarget.set(
-    hero.position.x + moveVelocity.x * 0.48 + cameraVolume.lateralBias * orbitCos,
-    hero.position.y + cameraVolume.targetLift,
-    hero.position.z + moveVelocity.y * 0.48 - lookAhead,
+    hero.position.x + moveVelocity.x * 0.48 + composedLateralBias * orbitCos,
+    hero.position.y + cameraVolume.targetLift + directionalPassageWeight * 0.45,
+    hero.position.z + moveVelocity.y * 0.48 - lookAhead + directionalSide * 1.6,
   );
   desiredCameraPosition.set(
-    hero.position.x + orbitSin * cameraVolume.distance + cameraVolume.lateralBias * orbitCos - moveVelocity.x * 0.08,
-    hero.position.y + cameraVolume.height,
-    hero.position.z + orbitCos * cameraVolume.distance - cameraVolume.lateralBias * orbitSin - moveVelocity.y * 0.08,
+    hero.position.x + orbitSin * cameraVolume.distance + composedLateralBias * orbitCos - moveVelocity.x * 0.08,
+    hero.position.y + cameraVolume.height + pagodaPassageWeight * 4.8 + directionalPassageWeight * (3.9 + pagodaHandoff * 1.2),
+    hero.position.z + orbitCos * (cameraVolume.distance - pagodaPassageWeight * 1.2) - composedLateralBias * orbitSin - moveVelocity.y * 0.08 + directionalSide * cameraVolume.distance * 1.72,
   );
   cameraRayDirection.subVectors(desiredCameraPosition, cameraLookTarget);
   const desiredDistance = cameraRayDirection.length();
@@ -1083,6 +1918,11 @@ function animate(now) {
     y: hero.position.y,
     grounded: onGround,
     resets: resetCount,
+    resetHistory: resetHistory.map((entry) => ({
+      ...entry,
+      from: [...entry.from],
+      checkpoint: [...entry.checkpoint],
+    })),
     health: playerHealth,
     combat: { enemiesAlive: enemies.length - enemiesDefeated, enemiesDefeated, bombs: bombs.length, attacking: attackActive > 0, dodging: dodgeTime > 0, guarding: Boolean(keys.KeyK && dodgeTime <= 0), hits: playerHits },
     atmosphere: { mistBanks: mistBanks.length, lanternPools: lanternPools.length, sunIntensity: sun.intensity, fogDensity: scene.fog.density, contactShadows: 1 + enemies.filter((enemy) => enemy.alive).length },
@@ -1098,6 +1938,16 @@ function animate(now) {
       distance: camera.position.distanceTo(cameraLookTarget),
       obstructed: Boolean(cameraHit),
       lookAhead,
+      pagodaVolume: pagodaCameraVolume,
+      pagodaVolumeWeight: pagodaProximity,
+      pagodaPassage: pagodaCameraPassage ? "over-eave-v1" : "0",
+      pagodaPassageWeight,
+      pagodaDirectionalPassage: pagodaDirectionalPassage ? "directional-v1" : "0",
+      pagodaTravelDirection,
+      pagodaHandoff,
+      directionalPassageWeight,
+      portraitRouteCamera: portraitRouteCamera ? "north-v1" : "0",
+      portraitRouteWeight,
     },
   };
 }
@@ -1115,6 +1965,12 @@ if (deterministicCapture) {
       animate(captureNow);
     }
     return structuredClone(window.__GAME__);
+  };
+  window.__GOAL10_PLAN_VIEW__ = () => {
+    camera.up.set(0, 0, -1);
+    camera.position.set(.2, 24, -23.4);
+    camera.lookAt(.2, 0, -23.4);
+    renderer.render(scene, camera);
   };
   // Establish an identical rendered frame before a controller begins input.
   window.__STEP__(1);

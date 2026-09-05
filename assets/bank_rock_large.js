@@ -261,13 +261,27 @@ export default function bankRockLargeCandidateC(THREE) {
   };
   measure();
   const size = bounds.getSize(new THREE.Vector3());
-  root.scale.set(7.2 / size.x, 3.8 / size.y, 4.6 / size.z);
-  measure();
   const center = bounds.getCenter(new THREE.Vector3());
+  const scale = new THREE.Vector3(7.2 / size.x, 3.8 / size.y, 4.6 / size.z);
   root.children.forEach((child) => {
-    child.position.x -= center.x / root.scale.x;
-    child.position.y -= bounds.min.y / root.scale.y;
-    child.position.z -= center.z / root.scale.z;
+    if (!child.isMesh) return;
+    child.updateMatrix();
+    child.geometry = child.geometry.clone();
+    child.geometry.applyMatrix4(child.matrix);
+    const attr = child.geometry.getAttribute("position");
+    for (let i = 0; i < attr.count; i++) {
+      attr.setXYZ(i,
+        (attr.getX(i) - center.x) * scale.x,
+        (attr.getY(i) - bounds.min.y) * scale.y,
+        (attr.getZ(i) - center.z) * scale.z);
+    }
+    attr.needsUpdate = true;
+    child.geometry.computeVertexNormals();
+    child.position.set(0, 0, 0);
+    child.rotation.set(0, 0, 0);
+    child.quaternion.identity();
+    child.scale.set(1, 1, 1);
+    child.updateMatrix();
   });
 
   root.userData.staticBakeable = true;

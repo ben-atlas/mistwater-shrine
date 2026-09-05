@@ -10,7 +10,6 @@ const MAX_SCENE_FEATURES = 24;
 const MAX_SHORE_PRIMITIVES = 24;
 const DEFAULT_DROPLETS = 160;
 const DEFAULT_CROWNS = 16;
-const DEFAULT_VISIBLE_RINGS = 48;
 const UP = new THREE.Vector3(0, 1, 0);
 
 const VERTEX_SHADER = /* glsl */ `
@@ -43,10 +42,14 @@ vec2 waterSample(vec2 q) {
     vec4 shape = uImpulseShape[i];
     vec4 direction = uImpulseDirection[i];
     float age = uTime - impulse.z;
-    float alive = step(0.0, age) * step(age, 5.6) * direction.w;
+    float alive = step(0.0, age) * step(age, 5.6) * step(.5, direction.w);
     vec2 delta = q - impulse.xy;
     float distanceToContact = length(delta);
-    float radius = shape.x + age * shape.y;
+    // Fragment history starts at the lotus rim, unlike the physical vertex
+    // displacement which still begins at the true contact point. This makes
+    // the three staggered impacts readable around a 2.7 m leaf without a
+    // separate torus mesh or a graphic target-marker silhouette.
+    float radius = shape.x + .82 + age * shape.y * 1.38;
     float ringWidth = mix(.13, .34, clamp(age * .55, 0.0, 1.0));
     float ring = exp(-pow((distanceToContact - radius) / ringWidth, 2.0));
     float decay = exp(-age * shape.w);
@@ -332,7 +335,10 @@ vec4 reflectedSceneFeatures(vec2 surfacePoint, vec3 normal) {
     // The same animated normal that lights the lake offsets every registered
     // silhouette. This makes the image shear into water-borne fragments rather
     // than sitting on the surface as a decal.
-    vec2 q = surfacePoint + normal.xz * vec2(4.8, 8.6);
+    // Keep reflected owners recognisable at chase distance.  The former deep
+    // parallax stretched small banks into screen-wide silver ribbons whenever
+    // the camera pitched down, especially across the lower edge in motion.
+    vec2 q = surfacePoint + normal.xz * vec2(3.15, 5.25);
     vec2 d = q - feature.xy;
     float along = dot(d, towardCamera);
     float across = dot(d, side);
@@ -342,10 +348,10 @@ vec4 reflectedSceneFeatures(vec2 surfacePoint, vec3 normal) {
     float isVegetation = step(1.5, klass) * (1.0 - step(2.5, klass));
     float isLantern = step(2.5, klass) * (1.0 - step(3.5, klass));
     float isKarst = step(3.5, klass);
-    float reach = radius * (1.25 + isVegetation * 1.35 + isKarst * 1.9);
+    float reach = radius * (1.12 + isVegetation * .92 + isKarst * 1.28);
     float lengthMask = smoothstep(-.12 * radius, .18 * radius, along)
       * (1.0 - smoothstep(reach * .72, reach, along));
-    float width = radius * mix(.92, .34, isVegetation + isLantern);
+    float width = radius * mix(.76, .32, isVegetation + isLantern);
     float widthMask = 1.0 - smoothstep(width * .45, width, abs(across));
     float verticalStrands = smoothstep(.18, .82, .5 + .5 * sin(
       across * mix(2.2, 8.7, isVegetation) + along * 2.9 + float(i) * 1.71));
@@ -357,7 +363,7 @@ vec4 reflectedSceneFeatures(vec2 surfacePoint, vec3 normal) {
     vec3 featureColor = mix(bankColor, vec3(.045, .145, .075), isVegetation);
     featureColor = mix(featureColor, vec3(1.0, .43, .075), isLantern);
     featureColor = mix(featureColor, vec3(.055, .105, .105), isKarst);
-    float alpha = mask * (.42 + isVegetation * .18 + isLantern * .48 + isKarst * .16);
+    float alpha = mask * (.32 + isVegetation * .15 + isLantern * .50 + isKarst * .12);
     color = mix(color, featureColor, alpha);
     coverage = max(coverage, alpha);
   }
@@ -386,35 +392,75 @@ vec2 padWaterlineCoupling(vec2 surfacePoint) {
   return vec2(wetSkirt, stirredSilt);
 }
 
+float padContactNeighborhood(vec2 surfacePoint) {
+  float neighborhood = 0.0;
+  for (int i = 0; i < 16; i++) {
+    vec4 pad = uReflectedPad[i];
+    vec2 d = surfacePoint - pad.xy;
+    // Stabilize only the water immediately owned by a traversal leaf.  This
+    // keeps broad reflected/procedural bands from overpowering a landing while
+    // leaving the rest of the lake's rich reflection field untouched.
+    float ellipse = length(vec2(d.x / max(.1, pad.z * 2.05),
+                                d.y / max(.1, pad.z * 1.42)));
+    neighborhood = max(neighborhood, pad.w * (1.0 - smoothstep(.62, 1.0, ellipse)));
+  }
+  return neighborhood;
+}
+
 vec4 fragmentContact(vec2 p) {
-  float ridge = 0.0;
+  float activeRidge = 0.0;
+  float middleRidge = 0.0;
+  float oldRidge = 0.0;
   float cavity = 0.0;
-  float wakeCrest = 0.0;
-  float wakeTrough = 0.0;
   for (int i = 0; i < MAX_IMPULSES; i++) {
     vec4 impulse = uImpulse[i];
     vec4 shape = uImpulseShape[i];
     vec4 direction = uImpulseDirection[i];
     float age = uTime - impulse.z;
-    float alive = step(0.0, age) * step(age, 5.6) * direction.w;
-    float distanceToContact = length(p - impulse.xy);
+    float alive = step(0.0, age) * step(age, 5.6) * step(.5, direction.w);
+    vec2 contactDelta = p - impulse.xy;
+    vec2 travelAxis = normalize(direction.xy + vec2(.0001));
+    vec2 travelNormal = vec2(-travelAxis.y, travelAxis.x);
+    // Each retained pressure age owns a slightly different ellipse. This keeps
+    // chase-camera projection from collapsing three circular ridges into three
+    // full-width horizontal bars, while still reading as one transferred impact.
+    float lane = clamp(direction.w, 1.0, 3.0);
+    float alongContact = dot(contactDelta, travelAxis);
+    float acrossContact = dot(contactDelta, travelNormal);
+    float ellipseStretch = 1.0 + (lane - 1.0) * .16;
+    float distanceToContact = length(vec2(alongContact / ellipseStretch, acrossContact));
     float radius = shape.x + age * shape.y;
     // The chase camera compresses the lake into a shallow screen-space wedge.
     // A physically tiny ridge disappeared entirely at normal framing, so the
     // readable event uses a broad trough/crest pair while retaining a broken rim.
-    float width = .14 + age * .030;
+    // A wider current crown and progressively narrower older lanes preserve
+    // three distinct values after the 1920 -> 480 px review reduction.
+    float width = (.175 - (lane - 1.0) * .014) + age * .030;
     float ring = exp(-pow((distanceToContact - radius) / width, 2.0));
-    vec2 radial = p - impulse.xy;
+    vec2 radial = contactDelta;
     float angle = atan(radial.y, radial.x);
     // Real landing rings are interrupted by capillary chop and leaf wakes.
     // Give each contact a stable but different broken rim instead of summing
     // perfect neon circles into a moire target.
-    float broken = smoothstep(.12, .82, .5 + .5 * sin(
-      angle * (7.0 + mod(float(i), 5.0))
-      + distanceToContact * 1.65 + impulse.x * .71 + impulse.y * .37));
-    broken = mix(.26, 1.0, broken);
-    float memory = exp(-age * .62);
-    ridge += alive * impulse.w * ring * memory * broken;
+    float broken = smoothstep(.18, .78, .5 + .5 * sin(
+      angle * (5.0 + mod(float(i), 4.0))
+      + distanceToContact * 2.15 + impulse.x * .71 + impulse.y * .37));
+    float microBreak = smoothstep(.34, .76, .5 + .5 * sin(
+      angle * 17.0 - distanceToContact * 4.2 + uTime * .16));
+    // Broad alternating angular windows remove the target-marker / contour-line
+    // silhouette and give older histories different surviving shores.
+    float lobePhase = angle + lane * 1.73 + dot(impulse.xy, vec2(.31, .19));
+    float lobeWindow = smoothstep(-.58, .05, sin(lobePhase * (1.35 + lane * .17)));
+    broken = mix(.09, 1.0, broken * mix(.52, 1.0, microBreak) * lobeWindow);
+    float memory = exp(-age * .48);
+    float ridge = alive * impulse.w * ring * memory * broken;
+    // direction.w is a deliberately discrete history lane: 1 = current crown,
+    // 2 = first older pressure band, 3 = oldest pressure band, 4 = locomotion
+    // wake. Keeping the three landing ages separate until final shading stops
+    // projection/downsampling from summing them into one pale horizontal smear.
+    activeRidge += ridge * (1.0 - step(.45, abs(direction.w - 1.0)));
+    middleRidge += ridge * (1.0 - step(.45, abs(direction.w - 2.0)));
+    oldRidge += ridge * (1.0 - step(.45, abs(direction.w - 3.0)));
     cavity += alive * impulse.w
       * exp(-distanceToContact * distanceToContact / (.18 + age * 1.15))
       * exp(-age * .72);
@@ -436,13 +482,40 @@ vec4 fragmentContact(vec2 p) {
     float brokenWake = mix(.38, 1.0, smoothstep(.18, .82,
       .5 + .5 * sin(forward * 5.3 + side * 8.1 + impulse.x * 1.7)));
     float wakeMemory = exp(-age * .68) * direction.z;
-    wakeCrest += alive * impulse.w * vWake * brokenWake * wakeMemory;
-    float troughArm = abs(side - max(forward, 0.0) * .38 - .16);
-    wakeTrough += alive * impulse.w
-      * exp(-troughArm * troughArm / max(.012, armWidth * armWidth * 1.8))
-      * envelope * wakeMemory;
   }
-  return vec4(ridge, cavity, wakeCrest, wakeTrough);
+  return vec4(activeRidge, middleRidge, oldRidge, cavity);
+}
+
+vec2 fragmentWake(vec2 p) {
+  float crest = 0.0;
+  float trough = 0.0;
+  for (int i = 0; i < MAX_IMPULSES; i++) {
+    vec4 impulse = uImpulse[i];
+    vec4 direction = uImpulseDirection[i];
+    float age = uTime - impulse.z;
+    float isWake = 1.0 - step(.45, abs(direction.w - 4.0));
+    float alive = step(0.0, age) * step(age, 5.6) * isWake;
+    vec2 radial = p - impulse.xy;
+    vec2 dir = normalize(direction.xy + vec2(.0001));
+    float forward = dot(radial, dir);
+    float side = abs(radial.x * dir.y - radial.y * dir.x);
+    float wakeLength = 1.85 + age * .16;
+    float armWidth = .12 + age * .025;
+    float envelope = smoothstep(-.18, .10, forward)
+      * (1.0 - smoothstep(wakeLength * .72, wakeLength, forward));
+    float arm = abs(side - max(forward, 0.0) * .38);
+    float brokenWake = mix(.38, 1.0, smoothstep(.18, .82,
+      .5 + .5 * sin(forward * 5.3 + side * 8.1 + impulse.x * 1.7)));
+    float memory = exp(-age * .68) * direction.z;
+    crest += alive * impulse.w
+      * exp(-arm * arm / max(.008, armWidth * armWidth))
+      * envelope * brokenWake * memory;
+    float troughArm = abs(side - max(forward, 0.0) * .38 - .16);
+    trough += alive * impulse.w
+      * exp(-troughArm * troughArm / max(.012, armWidth * armWidth * 1.8))
+      * envelope * memory;
+  }
+  return vec2(crest, trough);
 }
 
 vec2 interactionReflectionWarp(vec2 p) {
@@ -451,7 +524,7 @@ vec2 interactionReflectionWarp(vec2 p) {
     vec4 impulse = uImpulse[i];
     vec4 direction = uImpulseDirection[i];
     float age = uTime - impulse.z;
-    float alive = step(0.0, age) * step(age, 3.6) * direction.w;
+    float alive = step(0.0, age) * step(age, 3.6) * step(.5, direction.w);
     vec2 delta = p - impulse.xy;
     float local = exp(-dot(delta, delta) / (1.05 + age * 1.35));
     vec2 radial = normalize(delta + vec2(.001));
@@ -500,6 +573,7 @@ void main() {
     vWorldPosition.xz + reflectionWarp, N, objectCoverage);
   reflectedSky = mix(reflectedSky, objectReflection, min(1.0, objectCoverage * 1.28));
   vec2 padCoupling = padWaterlineCoupling(vWorldPosition.xz);
+  float padNeighborhood = padContactNeighborhood(vWorldPosition.xz);
 
   // The physically intersected gate resolves near the horizon. A restrained,
   // broken lacquer trail carries its dominant colour into gameplay-distance
@@ -563,46 +637,62 @@ void main() {
     dot(vWorldPosition.xz, vec2(.31, -.17)) + uTime * .38
     + sin(dot(vWorldPosition.xz, vec2(-.11, .27)) - uTime * .24) * .72
   );
-  body *= .86 + broadBand * .22 + vWaterHeight * .22;
+  body *= .86 + mix(broadBand * .22, .11, padNeighborhood * .82)
+    + vWaterHeight * .22;
   vec3 H = normalize(normalize(uSunDirection) + V);
   float broadSpecular = pow(max(dot(N, H), 0.0), 92.0);
   float glint = pow(max(dot(N, H), 0.0), 380.0);
-  float reflectionWeight = .25 + fresnel * .73;
+  // The former body-heavy mix collapsed to charcoal in the production chase
+  // camera. Keep deep water dark, but let the reflected wetland own enough of
+  // the mid angles to read as water rather than an opaque floor.
+  float reflectionWeight = .36 + fresnel * .61 + (1.0 - NdotV) * .08;
+  reflectionWeight *= 1.0 - padNeighborhood * .24;
   vec3 color = mix(body, reflectedSky, reflectionWeight);
 
   color *= 1.0 - padCoupling.x * .38;
   color = mix(color, vec3(.22, .30, .20), padCoupling.y * .24);
   color += uShallowColor * padCoupling.y * .055;
   color += uSunColor * (broadSpecular * .21 + glint * .52);
-  color += uShallowColor * shallows * .08;
+  color += uShallowColor * shallows * .15;
+  color += uHorizonColor * (1.0 - NdotV) * .055;
   color += uHorizonColor * smoothstep(.16, .92, vInteraction) * .11;
 
   // Interaction is vertex-evaluated, so a narrow/high-contrast threshold exposes
   // the water grid again. Keep shader foam broad and subtle; pooled crowns and
   // droplets carry the crisp contact read without turning a triangle white.
   vec4 fragmentHistory = fragmentContact(vWorldPosition.xz);
-  float contact = smoothstep(.035, .34, fragmentHistory.x);
-  float cavity = smoothstep(.045, .46, fragmentHistory.y);
+  float activeContact = smoothstep(.006, .095, fragmentHistory.x);
+  float middleContact = smoothstep(.005, .078, fragmentHistory.y);
+  float oldContact = smoothstep(.004, .062, fragmentHistory.z);
+  float cavity = smoothstep(.045, .46, fragmentHistory.w);
   // Alternating luminance is essential: rings survive grayscale while remaining
   // green-water phenomena, not white decals.
   color *= 1.0 - cavity * .30;
   // A dark outer trough plus restrained pale crest survives downsampling and
   // grayscale without reading as a pasted white decal.
-  float trough = smoothstep(.018, .16, fragmentHistory.x)
-    * (1.0 - smoothstep(.38, .88, fragmentHistory.x));
-  color *= 1.0 - trough * .34;
+  float activeTrough = smoothstep(.004, .050, fragmentHistory.x)
+    * (1.0 - smoothstep(.16, .52, fragmentHistory.x));
+  color *= 1.0 - activeTrough * .30;
   // Let the ring alter the reflected image as well as its colour: a dark
   // underside, bright broken crest and offset secondary lip form a small
   // displaced-water event that remains legible after 25% grayscale reduction.
-  float crestBreak = .66 + .34 * smoothstep(.18, .82, .5 + .5 * sin(
+  float crestBreak = .48 + .52 * smoothstep(.18, .82, .5 + .5 * sin(
     atan(vWorldPosition.z, vWorldPosition.x) * 11.0
     + vWorldPosition.x * 1.7 - vWorldPosition.z * 1.1));
-  float crest = contact * crestBreak;
-  color *= 1.0 - cavity * .08 - trough * .10;
-  color = mix(color, vec3(.46, .69, .62), crest * .43);
-  color += vec3(.16, .27, .23) * crest * .12;
-  float wakeDark = smoothstep(.025, .34, fragmentHistory.w);
-  float wakeBright = smoothstep(.035, .38, fragmentHistory.z);
+  float activeCrest = activeContact * crestBreak;
+  // Three age-coded value treatments: a pale active lip, dark middle trough,
+  // and restrained moss-silver old rim. Their distinct value polarity remains
+  // separable after 25% grayscale reduction even where perspective overlaps.
+  color *= 1.0 - cavity * .08 - activeTrough * .10;
+  color = mix(color, vec3(.64, .82, .73), activeCrest * .70);
+  color += vec3(.17, .28, .23) * activeCrest * .16;
+  color *= 1.0 - middleContact * .47;
+  color = mix(color, vec3(.25, .34, .29), middleContact * .10);
+  color *= 1.0 - oldContact * .08;
+  color = mix(color, vec3(.52, .65, .54), oldContact * .50);
+  vec2 fragmentWakeHistory = fragmentWake(vWorldPosition.xz);
+  float wakeDark = smoothstep(.025, .34, fragmentWakeHistory.y);
+  float wakeBright = smoothstep(.035, .38, fragmentWakeHistory.x);
   color *= 1.0 - wakeDark * .26;
   color = mix(color, vec3(.39, .63, .57), wakeBright * .36);
   // Deterministic audit planes. Capture scripts can pause the simulation once,
@@ -656,7 +746,6 @@ export function createWaterSystem({
   y = 0,
   maxDroplets = DEFAULT_DROPLETS,
   maxCrowns = DEFAULT_CROWNS,
-  maxVisibleRings = DEFAULT_VISIBLE_RINGS,
   colors = {},
 } = {}) {
   if (!scene) throw new Error("createWaterSystem requires a THREE.Scene");
@@ -810,31 +899,6 @@ export function createWaterSystem({
   crowns.name = "PooledSplashCrowns";
   scene.add(crowns);
 
-  // A pooled, grazing-angle ring layer carries impact history at ordinary
-  // chase-camera scale. Shader displacement remains the physical response;
-  // these thin broken rims supply the missing value contrast in grayscale.
-  const ringGeometry = new THREE.TorusGeometry(1, 0.010, 4, 40);
-  ringGeometry.rotateX(Math.PI / 2);
-  const ringMaterial = new THREE.MeshStandardMaterial({
-    color: 0x628f86,
-    emissive: 0x061411,
-    emissiveIntensity: 0.18,
-    roughness: 0.48,
-    transparent: true,
-    opacity: 0.34,
-    depthWrite: false,
-    fog: true,
-  });
-  const visibleRings = new THREE.InstancedMesh(
-    ringGeometry,
-    ringMaterial,
-    maxVisibleRings,
-  );
-  visibleRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  visibleRings.frustumCulled = false;
-  visibleRings.name = "PooledLandingMemoryRings";
-  scene.add(visibleRings);
-
   const dropletPosition = Array.from(
     { length: maxDroplets },
     () => new THREE.Vector3(),
@@ -852,14 +916,6 @@ export function createWaterSystem({
   const crownLife = new Float32Array(maxCrowns);
   const crownLifetime = new Float32Array(maxCrowns);
   const crownStrength = new Float32Array(maxCrowns);
-  const visibleRingPosition = Array.from(
-    { length: maxVisibleRings },
-    () => new THREE.Vector3(),
-  );
-  const visibleRingLife = new Float32Array(maxVisibleRings);
-  const visibleRingLifetime = new Float32Array(maxVisibleRings);
-  const visibleRingStrength = new Float32Array(maxVisibleRings);
-  const visibleRingDelay = new Float32Array(maxVisibleRings);
   const pads = [];
   const matrix = new THREE.Matrix4();
   const scale = new THREE.Vector3();
@@ -870,7 +926,6 @@ export function createWaterSystem({
   let wakeCursor = 0;
   let dropletCursor = 0;
   let crownCursor = 0;
-  let visibleRingCursor = 0;
   let time = 0;
   let seed = 0x7f4a7c15;
   let sceneFeatureCount = 0;
@@ -897,13 +952,15 @@ export function createWaterSystem({
     wake,
     birthOffset = 0,
     channel = "impact",
+    historyLane = 1,
   ) {
     const i = channel === "wake"
       ? IMPACT_IMPULSES + wakeCursor
       : impactCursor;
     impulse[i].set(x, z, time + birthOffset, amplitude);
     impulseShape[i].set(initialRadius, speed, frequency, decay);
-    impulseDirection[i].set(dirX, dirZ, wake, 1);
+    impulseDirection[i].set(dirX, dirZ, wake,
+      channel === "wake" ? 4 : Math.min(3, Math.max(1, historyLane)));
     if (channel === "wake") {
       wakeCursor = (wakeCursor + 1) % WAKE_IMPULSES;
     } else {
@@ -942,24 +999,6 @@ export function createWaterSystem({
     crownCursor = (i + 1) % maxCrowns;
   }
 
-  function emitVisibleRings(position, strength, count) {
-    for (let n = 0; n < count; n++) {
-      const i = visibleRingCursor;
-      const angle = n * 2.17 + random() * 0.32;
-      const offset = n === 0 ? 0 : 0.16 + n * 0.09;
-      visibleRingPosition[i].set(
-        position.x + Math.cos(angle) * offset,
-        y + 0.035 + n * 0.002,
-        position.z + Math.sin(angle) * offset,
-      );
-      visibleRingLife[i] = 0.0001;
-      visibleRingDelay[i] = n * 0.16;
-      visibleRingLifetime[i] = 3.05 + n * 0.42;
-      visibleRingStrength[i] = strength * (1 - n * 0.16);
-      visibleRingCursor = (i + 1) % maxVisibleRings;
-    }
-  }
-
   function emitImpulse({
     position,
     impactSpeed = 0,
@@ -975,10 +1014,10 @@ export function createWaterSystem({
     direction.normalize();
 
     for (let ring = 0; ring < settings.rings; ring++) {
-      // A landing is not a single mathematical point. Retain a compact history
-      // of the leading foot, displaced leaf bowl and trailing foot. Their
-      // staggered world-space origins keep two older events visible after the
-      // active crown without growing one implausibly large emissive circle.
+      // A lotus landing transfers pressure at the leaf rim, not as three tiny
+      // circles hidden beneath the leaf.  Keep three phase-separated bands at
+      // stable radial spacing so the crown and two older histories remain
+      // individually readable after chase-camera foreshortening and 25% scale.
       const sideX = -direction.y;
       const sideZ = direction.x;
       const along = ring === 0 ? 0 : ring === 1 ? -0.34 : -0.62;
@@ -987,16 +1026,20 @@ export function createWaterSystem({
         position.x + direction.x * along + sideX * across,
         position.z + direction.y * along + sideZ * across,
         settings.amplitude * (1 - ring * 0.34),
-        0.09 + ring * 0.045,
-        0.48 + ring * 0.055,
-        10.2 + ring * 1.35,
-        1.08 + ring * 0.16,
+        // Keep the three pressure ages nested around the leaf instead of
+        // projecting as unrelated pale bars across the lower frame.
+        .92 + ring * .62,
+        0.62,
+        8.8 + ring * 0.9,
+        0.66 + ring * 0.08,
         direction.x,
         direction.y,
         horizontalSpeed > 1.1 && ring === 0
           ? Math.min(1, horizontalSpeed / 6)
           : 0,
-        ring === 0 ? 0 : ring === 1 ? 0.11 : 0.24,
+        ring === 0 ? 0 : ring === 1 ? 0.14 : 0.31,
+        "impact",
+        ring + 1,
       );
     }
     emitDroplets(
@@ -1007,7 +1050,6 @@ export function createWaterSystem({
       direction.y,
     );
     if (settings.crown >= 0.5) emitCrown(position, settings.crown);
-    emitVisibleRings(position, settings.amplitude, settings.rings);
     return resolvedTier;
   }
 
@@ -1044,6 +1086,7 @@ export function createWaterSystem({
       baseY,
       baseRotationX: padMesh.rotation.x,
       baseRotationZ: padMesh.rotation.z,
+      baseScaleY: padMesh.scale.y,
       offset: 0,
       velocity: 0,
       tiltX: 0,
@@ -1118,6 +1161,11 @@ export function createWaterSystem({
       pad.mesh.position.y = pad.baseY + pad.offset;
       pad.mesh.rotation.x = pad.baseRotationX + pad.tiltX;
       pad.mesh.rotation.z = pad.baseRotationZ + pad.tiltZ;
+      // Let the visible leaf own the landing contact.  The vertical dip was
+      // already coupled to collision; a restrained squash now makes that
+      // pressure readable in the silhouette without a free-standing disc.
+      const compression = THREE.MathUtils.clamp(-pad.offset * 1.15, 0, 0.16);
+      pad.mesh.scale.y = pad.baseScaleY * (1 - compression);
       if (i < MAX_REFLECTED_PADS) {
         reflectedPad[i].x = pad.mesh.position.x;
         reflectedPad[i].y = pad.mesh.position.z;
@@ -1177,29 +1225,6 @@ export function createWaterSystem({
     }
     crowns.instanceMatrix.needsUpdate = true;
 
-    for (let i = 0; i < maxVisibleRings; i++) {
-      const life = visibleRingLife[i];
-      scale.setScalar(0);
-      if (life > 0) {
-        const nextLife = life + dt;
-        visibleRingLife[i] = nextLife >= visibleRingLifetime[i] ? 0 : nextLife;
-        const age = Math.max(0, nextLife - visibleRingDelay[i]);
-        if (nextLife >= visibleRingDelay[i]) {
-          const phase = Math.min(1, age / Math.max(0.1,
-            visibleRingLifetime[i] - visibleRingDelay[i]));
-          const radius = 0.16 + age * (0.38 + i % 3 * 0.035);
-          const fade = Math.pow(1 - phase, 0.58) * visibleRingStrength[i];
-          // Slightly elliptical, independently rotated rings avoid a graphic
-          // target symbol while remaining readable after 25% downsampling.
-          scale.set(radius, Math.max(0.28, fade * 0.72),
-            radius * (0.88 + (i % 5) * 0.025));
-        }
-      }
-      particleQuaternion.setFromAxisAngle(UP, (i * 2.399963) % Math.PI);
-      matrix.compose(visibleRingPosition[i], particleQuaternion, scale);
-      visibleRings.setMatrixAt(i, matrix);
-    }
-    visibleRings.instanceMatrix.needsUpdate = true;
   }
 
   function setHeroReflection(position, yaw = 0, enabled = true) {
@@ -1208,6 +1233,19 @@ export function createWaterSystem({
       return;
     }
     heroReflection.set(position.x, position.z, yaw, enabled ? 1 : 0);
+  }
+
+  function getPadStates() {
+    return pads.map((pad, index) => ({
+      index,
+      x: pad.mesh.position.x,
+      z: pad.mesh.position.z,
+      radius: pad.radius,
+      offset: pad.offset,
+      compression: THREE.MathUtils.clamp(-pad.offset * 1.15, 0, 0.16),
+      tiltX: pad.tiltX,
+      tiltZ: pad.tiltZ,
+    }));
   }
 
   function registerSceneFeature({ position, radius = 1, type = "bank" } = {}) {
@@ -1235,21 +1273,20 @@ export function createWaterSystem({
 
 
   function dispose() {
-    scene.remove(mesh, droplets, crowns, visibleRings);
+    scene.remove(mesh, droplets, crowns);
     mesh.geometry.dispose();
     material.dispose();
     dropletGeometry.dispose();
     dropletMaterial.dispose();
     crownGeometry.dispose();
     crownMaterial.dispose();
-    ringGeometry.dispose();
-    ringMaterial.dispose();
   }
 
   return {
     mesh,
     material,
     uniforms,
+    getPadStates,
     update,
     emitImpulse,
     stampWake,

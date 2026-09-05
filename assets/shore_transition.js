@@ -63,12 +63,26 @@ function normalize(root, THREE, target) {
   };
   measure();
   const size = box.getSize(new THREE.Vector3());
-  root.scale.set(target[0] / size.x, target[1] / size.y, target[2] / size.z);
-  measure();
   const center = box.getCenter(new THREE.Vector3());
+  const scale = new THREE.Vector3(target[0] / size.x, target[1] / size.y, target[2] / size.z);
   root.children.forEach((node) => {
-    node.position.x -= center.x / root.scale.x;
-    node.position.y -= box.min.y / root.scale.y;
-    node.position.z -= center.z / root.scale.z;
+    if (!node.isMesh) return;
+    node.updateMatrix();
+    node.geometry = node.geometry.clone();
+    node.geometry.applyMatrix4(node.matrix);
+    const attribute = node.geometry.getAttribute("position");
+    for (let i = 0; i < attribute.count; i++) {
+      attribute.setXYZ(i,
+        (attribute.getX(i) - center.x) * scale.x,
+        (attribute.getY(i) - box.min.y) * scale.y,
+        (attribute.getZ(i) - center.z) * scale.z);
+    }
+    attribute.needsUpdate = true;
+    node.geometry.computeVertexNormals();
+    node.position.set(0, 0, 0);
+    node.rotation.set(0, 0, 0);
+    node.quaternion.identity();
+    node.scale.set(1, 1, 1);
+    node.updateMatrix();
   });
 }
